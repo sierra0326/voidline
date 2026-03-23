@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Voidline Prototype</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>Voidline Prototype</h1>
+      <button id="restartBtn">Restart Combat</button>
+    </header>
+
+    <section class="combat-grid">
+      <div class="panel player-panel">
+        <div class="panel-head">
+          <h2>Your Ship</h2>
+          <span class="badge player-badge">Player</span>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="label">Hull</div>
+            <div id="playerHullText" class="value">12 / 12</div>
+            <div class="bar">
+              <div id="playerHullBar" class="bar-fill player-fill"></div>
+            </div>
+          </div>
+
+          <div class="stat-box">
+            <div class="label">Block</div>
+            <div id="playerBlockText" class="value">0</div>
+          </div>
+
+          <div class="stat-box">
+            <div class="label">Energy</div>
+            <div id="playerEnergyText" class="value">2 / 2</div>
+          </div>
+
+          <div class="stat-box">
+            <div class="label">Weapons</div>
+            <div id="playerWeaponsText" class="value">+0</div>
+          </div>
+
+          <div class="stat-box">
+            <div class="label">Shields</div>
+            <div id="playerShieldsText" class="value">+0</div>
+          </div>
+
+          <div class="stat-box">
+            <div class="label">Reactor</div>
+            <div id="playerReactorText" class="value">+0</div>
+          </div>
+        </div>
+
+        <div class="deck-info">
+          <div class="mini-box">
+            <div class="label">Draw</div>
+            <div id="drawCount" class="value">0</div>
+          </div>
+          <div class="mini-box">
+            <div class="label">Discard</div>
+            <div id="discardCount" class="value">0</div>
+          </div>
+          <div class="mini-box">
+            <div class="label">Exhaust</div>
+            <div id="exhaustCount" class="value">0</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel enemy-panel">
+        <div class="panel-head">
+          <h2 id="enemyName">Enemy</h2>
+          <span id="enemyDifficulty" class="badge enemy-badge">EASY</span>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="label">Hull</div>
+            <div id="enemyHullText" class="value">0 / 0</div>
+            <div class="bar">
+              <div id="enemyHullBar" class="bar-fill enemy-fill"></div>
+            </div>
+          </div>
+
+          <div class="stat-box">
+            <div class="label">Block</div>
+            <div id="enemyBlockText" class="value">0</div>
+          </div>
+
+          <div class="stat-box">
+            <div class="label">Intent</div>
+            <div id="enemyIntentText" class="value">—</div>
+          </div>
+
+          <div class="stat-box">
+            <div class="label">Encounter</div>
+            <div id="encounterInfo" class="value">1 / 3</div>
+          </div>
+        </div>
+
+        <div class="intent-box">
+          <div class="label">Next Enemy Action</div>
+          <div id="enemyIntentDetail" class="intent-detail">—</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="controls">
+      <button id="redrawBtn">Redraw</button>
+      <button id="endTurnBtn" class="primary">End Turn</button>
+    </section>
+
+    <section class="hand-section">
+      <div class="section-head">
+        <h3>Hand</h3>
+        <div class="muted">3-card hand. Cards resolve instantly.</div>
+      </div>
+      <div id="hand" class="hand"></div>
+    </section>
+
+    <section class="log-section">
+      <h3>Combat Log</h3>
+      <div id="log" class="log"></div>
+    </section>
+
+    <div id="overlay" class="overlay hidden">
+      <div class="overlay-card">
+        <h3 id="overlayTitle">Victory</h3>
+        <p id="overlayText">You won the encounter.</p>
+        <button id="overlayBtn" class="primary">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>

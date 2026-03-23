@@ -1,0 +1,345 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at top, #0e1a2f, #050912);
+  color: #e6f0ff;
+  font-family: Arial, sans-serif;
+}
+
+.container {
+  max-width: 1200px;
+  margin: auto;
+  padding: 28px 20px 40px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+h1, h2, h3 {
+  margin: 0;
+}
+
+button {
+  background: #1c2c4a;
+  border: 1px solid #375a8c;
+  color: white;
+  padding: 12px 18px;
+  cursor: pointer;
+  border-radius: 10px;
+  font-weight: 700;
+}
+
+button:hover {
+  background: #243a63;
+}
+
+button.primary {
+  background: linear-gradient(90deg, #5ed3b7, #4aa8ff);
+  border: none;
+  color: #04111d;
+}
+
+.combat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.panel {
+  border: 1px solid #2f4d7a;
+  padding: 22px;
+  border-radius: 20px;
+  background: rgba(10, 20, 40, 0.65);
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.badge {
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.player-badge {
+  color: #79bcff;
+  border: 1px solid rgba(121, 188, 255, 0.4);
+  background: rgba(121, 188, 255, 0.08);
+}
+
+.enemy-badge {
+  color: #ff8484;
+  border: 1px solid rgba(255, 132, 132, 0.35);
+  background: rgba(255, 132, 132, 0.08);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.stat-box,
+.mini-box,
+.intent-box {
+  border: 1px solid #375a8c;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.label {
+  color: #aabbd6;
+  font-size: 0.95rem;
+  margin-bottom: 8px;
+}
+
+.value {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.bar {
+  width: 100%;
+  height: 14px;
+  margin-top: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  width: 100%;
+  transition: width 0.2s ease;
+}
+
+.player-fill {
+  background: linear-gradient(90deg, #75e6c8, #63b8ff);
+}
+
+.enemy-fill {
+  background: linear-gradient(90deg, #ff9c73, #ff7373);
+}
+
+.intent-box {
+  margin-top: 16px;
+}
+
+.intent-detail {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.deck-info {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.controls {
+  display: flex;
+  gap: 12px;
+  margin-top: 26px;
+}
+
+.hand-section,
+.log-section {
+  margin-top: 28px;
+}
+
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.muted {
+  color: #9fb3cf;
+}
+
+.hand {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.card {
+  border: 1px solid #3d6ba5;
+  padding: 14px;
+  background: #13213b;
+  border-radius: 14px;
+  transition: 0.15s;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.card:hover {
+  transform: translateY(-4px);
+  background: #1c3155;
+}
+
+.card.system {
+  border-color: rgba(116, 255, 211, 0.35);
+}
+
+.card.missile,
+.card.torpedo {
+  border-color: rgba(255, 211, 106, 0.35);
+}
+
+.card.disabled {
+  opacity: 0.55;
+}
+
+.card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.card-title {
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.cost {
+  min-width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  color: #79bcff;
+  background: rgba(121, 188, 255, 0.1);
+  border: 1px solid rgba(121, 188, 255, 0.25);
+}
+
+.card-type {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.card.system .card-type {
+  background: rgba(116, 255, 211, 0.12);
+  color: #74ffd3;
+}
+
+.card.missile .card-type,
+.card.torpedo .card-type {
+  background: rgba(255, 211, 106, 0.12);
+  color: #ffd36a;
+}
+
+.card-text {
+  color: #b8c7dd;
+  line-height: 1.45;
+  flex: 1;
+}
+
+.card button {
+  width: 100%;
+  margin-top: auto;
+}
+
+.log {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid #375a8c;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 10px;
+}
+
+.log-entry {
+  padding: 10px 12px;
+  border-left: 3px solid #4aa8ff;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.log-entry.enemy {
+  border-left-color: #ff7373;
+}
+
+.log-entry.system {
+  border-left-color: #74ffd3;
+}
+
+.log-entry.missile,
+.log-entry.torpedo {
+  border-left-color: #ffd36a;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 8, 16, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.overlay.hidden {
+  display: none;
+}
+
+.overlay-card {
+  width: min(460px, 100%);
+  background: #101b2f;
+  border: 1px solid #2f4d7a;
+  border-radius: 20px;
+  padding: 24px;
+  text-align: center;
+}
+
+.overlay-card h3 {
+  margin-bottom: 10px;
+}
+
+.overlay-card p {
+  margin-bottom: 18px;
+  color: #b8c7dd;
+}
+
+@media (max-width: 900px) {
+  .combat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hand {
+    grid-template-columns: 1fr;
+  }
+
+  .header,
+  .section-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
