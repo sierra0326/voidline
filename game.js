@@ -3,15 +3,24 @@ console.log("game.js loaded");
 const state = {
   player: null,
   enemy: null,
+  runDeck: [],
   drawPile: [],
   discardPile: [],
   exhaustPile: [],
   hand: [],
   turn: 1,
+  runCredits: 0,
+  nextAttackBonus: 0,
   combatEnded: false,
   encounterIndex: 0,
-  runWon: false
+  runWon: false,
+  rewardChoices: [],
+  pendingReward: false
 };
+
+const SHIP_NAME = "Bounty Hunter";
+const SHIP_PASSIVE_TEXT = "Gain 15 credits after each encounter win.";
+const ENCOUNTER_CREDIT_REWARD = 15;
 
 const SYSTEM_CARDS = [
   {
@@ -21,7 +30,7 @@ const SYSTEM_CARDS = [
     cost: 1,
     description: "Deal 2 damage.",
     effect() {
-      dealDamageToEnemy(2 + state.player.weaponBonus, "Pulse Shot");
+      dealAttackDamageToEnemy(2, "Pulse Shot");
     }
   },
   {
@@ -39,9 +48,75 @@ const SYSTEM_CARDS = [
     name: "Patch Hull",
     type: "system",
     cost: 1,
-    description: "Repair 2 hull.",
+    description: "Decommissioned. No effect.",
     effect() {
-      repairPlayerHull(2, "Patch Hull");
+      log("Patch Hull is decommissioned and has no effect.", "system");
+    }
+  },
+  {
+    id: "overcharge-cannon",
+    name: "Overcharge Cannon",
+    type: "system",
+    cost: 1,
+    description: "Deal 4 damage.",
+    effect() {
+      dealAttackDamageToEnemy(4, "Overcharge Cannon");
+    }
+  },
+  {
+    id: "reinforce-shields",
+    name: "Reinforce Shields",
+    type: "system",
+    cost: 1,
+    description: "Gain 4 block.",
+    effect() {
+      gainPlayerBlock(4 + state.player.shieldBonus, "Reinforce Shields");
+    }
+  },
+  {
+    id: "capacitor-burst",
+    name: "Capacitor Burst",
+    type: "system",
+    cost: 0,
+    description: "Gain 1 energy.",
+    effect() {
+      state.player.energy += 1;
+      log("Capacitor Burst grants 1 energy.", "system");
+    }
+  },
+  {
+    id: "finishing-shot",
+    name: "Finishing Shot",
+    type: "system",
+    cost: 2,
+    description: "Deal 8 damage. If enemy is below half hull, deal 12 instead.",
+    effect() {
+      const belowHalfHull = state.enemy.hull < state.enemy.maxHull / 2;
+      const baseDamage = belowHalfHull ? 12 : 8;
+      dealAttackDamageToEnemy(baseDamage, "Finishing Shot");
+    }
+  },
+  {
+    id: "target-lock",
+    name: "Target Lock",
+    type: "system",
+    cost: 1,
+    description: "Deal 3 damage. Your next attack this turn deals +3 damage.",
+    effect() {
+      dealAttackDamageToEnemy(3, "Target Lock");
+      state.nextAttackBonus += 3;
+      log("Target Lock primes your next attack for +3 damage this turn.", "system");
+    }
+  },
+  {
+    id: "collection-sweep",
+    name: "Collection Sweep",
+    type: "system",
+    cost: 1,
+    description: "Gain 5 block and deal 3 damage.",
+    effect() {
+      gainPlayerBlock(5 + state.player.shieldBonus, "Collection Sweep");
+      dealAttackDamageToEnemy(3, "Collection Sweep");
     }
   }
 ];
@@ -54,7 +129,7 @@ const MISSILE_CARDS = [
     cost: 2,
     description: "Deal 6 damage. Exhaust.",
     effect() {
-      dealDamageToEnemy(6 + state.player.weaponBonus, "Missile");
+      dealAttackDamageToEnemy(6, "Missile");
     }
   }
 ];
@@ -68,10 +143,20 @@ const STARTING_DECK_IDS = [
   "brace",
   "brace",
   "brace",
-  "patch-hull",
-  "patch-hull",
   "missile",
   "missile"
+];
+
+const REWARD_POOL_IDS = [
+  "pulse-shot",
+  "brace",
+  "missile",
+  "overcharge-cannon",
+  "reinforce-shields",
+  "capacitor-burst",
+  "finishing-shot",
+  "target-lock",
+  "collection-sweep"
 ];
 
 const ENEMY_TYPES = [
@@ -79,7 +164,7 @@ const ENEMY_TYPES = [
     id: "scout",
     name: "Scout Drone",
     difficulty: "easy",
-    maxHull: 8,
+    maxHull: 10,
     getIntent(turn) {
       const cycle = [
         { type: "attack", amount: 2, text: "Attack for 2" },
@@ -93,12 +178,12 @@ const ENEMY_TYPES = [
     id: "raider",
     name: "Raider Skiff",
     difficulty: "medium",
-    maxHull: 12,
+    maxHull: 15,
     getIntent(turn) {
       const cycle = [
-        { type: "attack", amount: 3, text: "Attack for 3" },
-        { type: "attack", amount: 3, text: "Attack for 3" },
-        { type: "block", amount: 3, text: "Will gain 3 block" }
+        { type: "attack", amount: 4, text: "Attack for 4" },
+        { type: "attack", amount: 4, text: "Attack for 4" },
+        { type: "block", amount: 4, text: "Will gain 4 block" }
       ];
       return cycle[(turn - 1) % cycle.length];
     }
@@ -107,12 +192,12 @@ const ENEMY_TYPES = [
     id: "hunter",
     name: "Hunter Frigate",
     difficulty: "hard",
-    maxHull: 16,
+    maxHull: 22,
     getIntent(turn) {
       const cycle = [
-        { type: "attack", amount: 4, text: "Attack for 4" },
-        { type: "block", amount: 3, text: "Will gain 3 block" },
-        { type: "attack", amount: 4, text: "Attack for 4" }
+        { type: "attack", amount: 6, text: "Attack for 6" },
+        { type: "block", amount: 5, text: "Will gain 5 block" },
+        { type: "attack", amount: 6, text: "Attack for 6" }
       ];
       return cycle[(turn - 1) % cycle.length];
     }
@@ -131,6 +216,9 @@ const els = {
   playerWeaponsText: document.getElementById("playerWeaponsText"),
   playerShieldsText: document.getElementById("playerShieldsText"),
   playerReactorText: document.getElementById("playerReactorText"),
+  shipNameText: document.getElementById("shipNameText"),
+  shipPassiveText: document.getElementById("shipPassiveText"),
+  creditsText: document.getElementById("creditsText"),
 
   drawCount: document.getElementById("drawCount"),
   discardCount: document.getElementById("discardCount"),
@@ -151,7 +239,8 @@ const els = {
   overlay: document.getElementById("overlay"),
   overlayTitle: document.getElementById("overlayTitle"),
   overlayText: document.getElementById("overlayText"),
-  overlayBtn: document.getElementById("overlayBtn")
+  overlayBtn: document.getElementById("overlayBtn"),
+  rewardOptions: document.getElementById("rewardOptions")
 };
 
 function makeCard(id) {
@@ -166,6 +255,10 @@ function makeCard(id) {
 
 function makeStartingDeck() {
   return STARTING_DECK_IDS.map(id => makeCard(id));
+}
+
+function makeRunDeck() {
+  return [...STARTING_DECK_IDS];
 }
 
 function shuffle(array) {
@@ -186,14 +279,78 @@ function log(message, type = "") {
 
 function hideOverlay() {
   els.overlay.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.add("hidden");
+  els.overlayBtn.classList.remove("hidden");
 }
 
 function showOverlay(title, text, buttonText, onClick) {
   els.overlayTitle.textContent = title;
   els.overlayText.textContent = text;
   els.overlayBtn.textContent = buttonText;
+  els.overlayBtn.classList.remove("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.add("hidden");
   els.overlay.classList.remove("hidden");
   els.overlayBtn.onclick = onClick;
+}
+
+function getEncounterTierLabel(index) {
+  if (index === 0) return "Tier I - Scout skirmish";
+  if (index === 1) return "Tier II - Raider assault";
+  return "Tier III - Hunter siege";
+}
+
+function awardEncounterCredits() {
+  state.runCredits += ENCOUNTER_CREDIT_REWARD;
+  log(`Bounty collected: +${ENCOUNTER_CREDIT_REWARD} credits. Total credits: ${state.runCredits}.`, "system");
+}
+
+function buildRewardChoices() {
+  const pool = shuffle(REWARD_POOL_IDS);
+  return pool.slice(0, 3);
+}
+
+function continueToNextEncounter() {
+  state.pendingReward = false;
+  state.rewardChoices = [];
+  state.encounterIndex += 1;
+  beginEncounter();
+}
+
+function chooseReward(cardId) {
+  state.runDeck.push(cardId);
+  const card = ALL_CARDS.find(c => c.id === cardId);
+  if (card) {
+    log(`Reward chosen: ${card.name} added to your run deck.`, "system");
+  }
+  continueToNextEncounter();
+}
+
+function showRewardOverlay() {
+  state.pendingReward = true;
+  state.rewardChoices = buildRewardChoices();
+
+  els.overlayTitle.textContent = "Encounter Won";
+  els.overlayText.textContent = `Choose 1 card reward before encounter ${state.encounterIndex + 2}.`;
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  state.rewardChoices.forEach(cardId => {
+    const card = ALL_CARDS.find(c => c.id === cardId);
+    if (!card) return;
+
+    const button = document.createElement("button");
+    button.className = "reward-option";
+    button.innerHTML = `
+      <div class="reward-name">${card.name}</div>
+      <div class="reward-meta">${card.type.toUpperCase()} • Cost ${card.cost} • ${card.description}</div>
+    `;
+    button.addEventListener("click", () => chooseReward(cardId));
+    els.rewardOptions.appendChild(button);
+  });
 }
 
 function getCurrentEnemyTemplate() {
@@ -217,15 +374,18 @@ function beginEncounter() {
   const template = getCurrentEnemyTemplate();
 
   state.enemy = buildEnemyFromTemplate(template);
-  state.drawPile = shuffle(makeStartingDeck());
+  state.drawPile = shuffle(state.runDeck.map(id => makeCard(id)));
   state.discardPile = [];
   state.exhaustPile = [];
   state.hand = [];
   state.turn = 1;
   state.combatEnded = false;
   state.runWon = false;
+  state.pendingReward = false;
+  state.rewardChoices = [];
 
   state.player.block = 0;
+  state.nextAttackBonus = 0;
   state.player.energy = state.player.baseEnergy + state.player.reactorBonus;
 
   hideOverlay();
@@ -239,17 +399,22 @@ function beginEncounter() {
 
 function startRun() {
   state.player = {
-    maxHull: 12,
-    hull: 12,
+    maxHull: 14,
+    hull: 14,
     block: 0,
-    baseEnergy: 2,
-    energy: 2,
+    baseEnergy: 3,
+    energy: 3,
     weaponBonus: 0,
     shieldBonus: 0,
     reactorBonus: 0
   };
 
+  state.runDeck = makeRunDeck();
+  state.runCredits = 0;
+  state.nextAttackBonus = 0;
   state.encounterIndex = 0;
+  state.rewardChoices = [];
+  state.pendingReward = false;
   els.log.innerHTML = "";
   beginEncounter();
 }
@@ -271,6 +436,16 @@ function repairPlayerHull(amount, sourceName) {
   log(`${sourceName} repairs ${repaired} hull.`, "system");
 }
 
+function dealAttackDamageToEnemy(baseAmount, sourceName) {
+  const bonus = state.nextAttackBonus;
+  const total = baseAmount + state.player.weaponBonus + bonus;
+  dealDamageToEnemy(total, sourceName);
+  if (bonus > 0) {
+    log(`Attack bonus consumed: +${bonus} damage.`, "system");
+    state.nextAttackBonus = 0;
+  }
+}
+
 function dealDamageToEnemy(amount, sourceName) {
   const blocked = Math.min(state.enemy.block, amount);
   const hpDamage = amount - blocked;
@@ -288,6 +463,7 @@ function dealDamageToEnemy(amount, sourceName) {
 
   if (state.enemy.hull <= 0) {
     state.combatEnded = true;
+    awardEncounterCredits();
 
     if (state.encounterIndex >= ENEMY_TYPES.length - 1) {
       state.runWon = true;
@@ -406,7 +582,7 @@ function resolveEnemyTurn() {
 }
 
 function endTurn() {
-  if (state.combatEnded) return;
+  if (state.combatEnded || state.pendingReward) return;
 
   discardHand();
   log("You end your turn.");
@@ -426,6 +602,7 @@ function endTurn() {
 
   // Player block expires at the start of the new player turn
   state.player.block = 0;
+  state.nextAttackBonus = 0;
 
   state.player.energy = state.player.baseEnergy + state.player.reactorBonus;
 
@@ -435,7 +612,7 @@ function endTurn() {
 }
 
 function redrawHand() {
-  if (state.combatEnded) return;
+  if (state.combatEnded || state.pendingReward) return;
 
   if (state.player.energy < 1) {
     log("You need 1 energy to redraw.", "system");
@@ -470,15 +647,7 @@ function handleCombatEnd() {
     return;
   }
 
-  showOverlay(
-    "Encounter Won",
-    `You defeated ${state.enemy.name}. Continue to the next encounter.`,
-    "Next Encounter",
-    () => {
-      state.encounterIndex += 1;
-      beginEncounter();
-    }
-  );
+  showRewardOverlay();
 }
 
 function renderHand() {
@@ -538,6 +707,9 @@ function render() {
   els.playerWeaponsText.textContent = `+${state.player.weaponBonus}`;
   els.playerShieldsText.textContent = `+${state.player.shieldBonus}`;
   els.playerReactorText.textContent = `+${state.player.reactorBonus}`;
+  els.shipNameText.textContent = SHIP_NAME;
+  els.shipPassiveText.textContent = SHIP_PASSIVE_TEXT;
+  els.creditsText.textContent = state.runCredits;
 
   els.drawCount.textContent = state.drawPile.length;
   els.discardCount.textContent = state.discardPile.length;
@@ -548,7 +720,7 @@ function render() {
   els.enemyHullText.textContent = `${state.enemy.hull} / ${state.enemy.maxHull}`;
   els.enemyHullBar.style.width = `${(state.enemy.hull / state.enemy.maxHull) * 100}%`;
   els.enemyBlockText.textContent = state.enemy.block;
-  els.encounterInfo.textContent = `${state.encounterIndex + 1} / ${ENEMY_TYPES.length}`;
+  els.encounterInfo.textContent = `${state.encounterIndex + 1} / ${ENEMY_TYPES.length} • ${getEncounterTierLabel(state.encounterIndex)}`;
 
   if (state.combatEnded) {
     if (state.player.hull <= 0) {

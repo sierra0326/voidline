@@ -328,6 +328,41 @@ button.primary {
   color: #b8c7dd;
 }
 
+.reward-options {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+  text-align: left;
+}
+
+.reward-option {
+  border: 1px solid #3d6ba5;
+  background: #13213b;
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: #e6f0ff;
+  width: 100%;
+}
+
+.reward-option:hover {
+  background: #1c3155;
+}
+
+.reward-option .reward-name {
+  font-weight: 800;
+}
+
+.reward-option .reward-meta {
+  margin-top: 4px;
+  color: #b8c7dd;
+  font-size: 0.9rem;
+}
+
+.hidden {
+  display: none;
+}
+
 @media (max-width: 900px) {
   .combat-grid {
     grid-template-columns: 1fr;
