@@ -12,6 +12,7 @@ const state = {
   runCredits: 0,
   nextAttackBonus: 0,
   attacksPlayedThisTurn: 0,
+  enemyAttackReduction: 0,
   combatEnded: false,
   encounterIndex: 0,
   runWon: false,
@@ -156,7 +157,7 @@ const SYSTEM_CARDS = [
     id: "reroute-power",
     name: "Reroute Power",
     type: "system",
-    cost: 0,
+    cost: 1,
     description: "Gain 1 energy. Draw 1 card.",
     effect() {
       state.player.energy += 1;
@@ -180,10 +181,11 @@ const SYSTEM_CARDS = [
     name: "Covering Fire",
     type: "system",
     cost: 1,
-    description: "Gain 4 block and deal 3 damage.",
+    description: "Reduce the enemy's next attack by 2. Draw 1 card.",
     effect() {
-      gainPlayerBlock(4 + state.player.shieldBonus, "Covering Fire");
-      dealAttackDamageToEnemy(3, "Covering Fire");
+      state.enemyAttackReduction += 2;
+      drawCards(1);
+      log("Covering Fire reduces the enemy's next attack by 2.", "system");
     }
   },
   {
@@ -224,11 +226,100 @@ const SYSTEM_CARDS = [
     name: "Execution Barrage",
     type: "system",
     cost: 2,
-    description: "Deal 7 damage. If enemy is below half hull, deal 11 instead.",
+    description: "Deal 6 damage. If you've played an attack this turn, deal 10 instead.",
     effect() {
-      const belowHalfHull = state.enemy.hull < state.enemy.maxHull / 2;
-      const baseDamage = belowHalfHull ? 11 : 7;
+      const baseDamage = state.attacksPlayedThisTurn > 0 ? 10 : 6;
       dealAttackDamageToEnemy(baseDamage, "Execution Barrage");
+    }
+  },
+  {
+    id: "hunters-tag",
+    name: "Hunter's Tag",
+    type: "system",
+    cost: 1,
+    description: "Deal 2 damage. Apply Mark.",
+    effect() {
+      dealAttackDamageToEnemy(2, "Hunter's Tag");
+      state.enemy.isMarked = true;
+      log("Enemy is Marked.", "system");
+    }
+  },
+  {
+    id: "paint-the-target",
+    name: "Paint the Target",
+    type: "system",
+    cost: 0,
+    description: "Apply Mark. Draw 1 card.",
+    effect() {
+      state.enemy.isMarked = true;
+      drawCards(1);
+      log("Enemy is Marked.", "system");
+    }
+  },
+  {
+    id: "pursuit-sweep",
+    name: "Pursuit Sweep",
+    type: "system",
+    cost: 1,
+    description: "Gain 3 block. Apply Mark.",
+    effect() {
+      gainPlayerBlock(3 + state.player.shieldBonus, "Pursuit Sweep");
+      state.enemy.isMarked = true;
+      log("Enemy is Marked.", "system");
+    }
+  },
+  {
+    id: "claim-shot",
+    name: "Claim Shot",
+    type: "system",
+    cost: 1,
+    description: "Deal 4 damage. If Marked, deal 8 instead.",
+    effect() {
+      const baseDamage = state.enemy.isMarked ? 8 : 4;
+      dealAttackDamageToEnemy(baseDamage, "Claim Shot");
+    }
+  },
+  {
+    id: "bounty-collection",
+    name: "Bounty Collection",
+    type: "system",
+    cost: 2,
+    description: "Deal 7 damage. If Marked, gain 1 energy.",
+    effect() {
+      dealAttackDamageToEnemy(7, "Bounty Collection");
+      if (state.enemy.isMarked) {
+        state.player.energy += 1;
+        log("Bounty Collection grants 1 energy on a Marked target.", "system");
+      }
+    }
+  },
+  {
+    id: "dead-or-alive",
+    name: "Dead or Alive",
+    type: "system",
+    cost: 2,
+    description: "Deal 6 damage. If Marked, gain 6 block and deal 9 instead.",
+    effect() {
+      if (state.enemy.isMarked) {
+        gainPlayerBlock(6 + state.player.shieldBonus, "Dead or Alive");
+        dealAttackDamageToEnemy(9, "Dead or Alive");
+      } else {
+        dealAttackDamageToEnemy(6, "Dead or Alive");
+      }
+    }
+  },
+  {
+    id: "tracking-burst",
+    name: "Tracking Burst",
+    type: "system",
+    cost: 1,
+    description: "Deal 3 damage. If enemy is not Marked, apply Mark.",
+    effect() {
+      dealAttackDamageToEnemy(3, "Tracking Burst");
+      if (!state.enemy.isMarked) {
+        state.enemy.isMarked = true;
+        log("Enemy is Marked.", "system");
+      }
     }
   }
 ];
@@ -278,7 +369,14 @@ const REWARD_POOL_IDS = [
   "skirmish-step",
   "pressure-shot",
   "opportunist-strike",
-  "execution-barrage"
+  "execution-barrage",
+  "hunters-tag",
+  "paint-the-target",
+  "pursuit-sweep",
+  "claim-shot",
+  "bounty-collection",
+  "dead-or-alive",
+  "tracking-burst"
 ];
 
 const ENEMY_TYPES = [
@@ -381,6 +479,7 @@ const els = {
   enemyHullText: document.getElementById("enemyHullText"),
   enemyHullBar: document.getElementById("enemyHullBar"),
   enemyBlockText: document.getElementById("enemyBlockText"),
+  enemyMarkText: document.getElementById("enemyMarkText"),
   enemyIntentText: document.getElementById("enemyIntentText"),
   enemyIntentDetail: document.getElementById("enemyIntentDetail"),
   encounterInfo: document.getElementById("encounterInfo"),
@@ -519,6 +618,7 @@ function buildEnemyFromTemplate(template) {
     maxHull: template.maxHull,
     hull: template.maxHull,
     block: 0,
+    isMarked: false,
     getIntent: template.getIntent,
     intent: template.getIntent(1)
   };
@@ -541,6 +641,7 @@ function beginEncounter() {
   state.player.block = 0;
   state.nextAttackBonus = 0;
   state.attacksPlayedThisTurn = 0;
+  state.enemyAttackReduction = 0;
   state.player.energy = state.player.baseEnergy + state.player.reactorBonus;
 
   hideOverlay();
@@ -568,6 +669,7 @@ function startRun() {
   state.runCredits = 0;
   state.nextAttackBonus = 0;
   state.attacksPlayedThisTurn = 0;
+  state.enemyAttackReduction = 0;
   state.encounterIndex = 0;
   state.rewardChoices = [];
   state.pendingReward = false;
@@ -729,13 +831,23 @@ function resolveEnemyTurn() {
 
   switch (intent.type) {
     case "attack":
-      dealDamageToPlayer(intent.amount, state.enemy.name);
+      {
+        const reduction = state.enemyAttackReduction;
+        const finalAmount = Math.max(0, intent.amount - reduction);
+        if (reduction > 0) {
+          log(`Enemy attack reduced by ${reduction}.`, "system");
+        }
+        dealDamageToPlayer(finalAmount, state.enemy.name);
+      }
       break;
 
     case "block":
       gainEnemyBlock(intent.amount, state.enemy.name);
       break;
   }
+
+  state.enemyAttackReduction = 0;
+  state.enemy.isMarked = false;
 }
 
 function endTurn() {
@@ -878,6 +990,7 @@ function render() {
   els.enemyHullText.textContent = `${state.enemy.hull} / ${state.enemy.maxHull}`;
   els.enemyHullBar.style.width = `${(state.enemy.hull / state.enemy.maxHull) * 100}%`;
   els.enemyBlockText.textContent = state.enemy.block;
+  els.enemyMarkText.textContent = state.enemy.isMarked ? "MARKED" : "CLEAR";
   els.encounterInfo.textContent = `${state.encounterIndex + 1} / ${ENEMY_TYPES.length} • ${getEncounterTierLabel(state.encounterIndex)}`;
 
   if (state.combatEnded) {
