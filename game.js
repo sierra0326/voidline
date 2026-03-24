@@ -11,6 +11,7 @@ const state = {
   turn: 1,
   runCredits: 0,
   nextAttackBonus: 0,
+  attacksPlayedThisTurn: 0,
   combatEnded: false,
   encounterIndex: 0,
   runWon: false,
@@ -118,6 +119,117 @@ const SYSTEM_CARDS = [
       gainPlayerBlock(5 + state.player.shieldBonus, "Collection Sweep");
       dealAttackDamageToEnemy(3, "Collection Sweep");
     }
+  },
+  {
+    id: "tactical-scan",
+    name: "Tactical Scan",
+    type: "system",
+    cost: 1,
+    description: "Draw 2 cards.",
+    effect() {
+      drawCards(2);
+    }
+  },
+  {
+    id: "evasive-burst",
+    name: "Evasive Burst",
+    type: "system",
+    cost: 1,
+    description: "Gain 4 block. Draw 1 card.",
+    effect() {
+      gainPlayerBlock(4 + state.player.shieldBonus, "Evasive Burst");
+      drawCards(1);
+    }
+  },
+  {
+    id: "deep-cache",
+    name: "Deep Cache",
+    type: "system",
+    cost: 1,
+    description: "Draw 3 cards. Exhaust.",
+    exhaust: true,
+    effect() {
+      drawCards(3);
+    }
+  },
+  {
+    id: "reroute-power",
+    name: "Reroute Power",
+    type: "system",
+    cost: 0,
+    description: "Gain 1 energy. Draw 1 card.",
+    effect() {
+      state.player.energy += 1;
+      drawCards(1);
+      log("Reroute Power grants 1 energy.", "system");
+    }
+  },
+  {
+    id: "overclock-drive",
+    name: "Overclock Drive",
+    type: "system",
+    cost: 1,
+    description: "Gain 2 energy.",
+    effect() {
+      state.player.energy += 2;
+      log("Overclock Drive grants 2 energy.", "system");
+    }
+  },
+  {
+    id: "covering-fire",
+    name: "Covering Fire",
+    type: "system",
+    cost: 1,
+    description: "Gain 4 block and deal 3 damage.",
+    effect() {
+      gainPlayerBlock(4 + state.player.shieldBonus, "Covering Fire");
+      dealAttackDamageToEnemy(3, "Covering Fire");
+    }
+  },
+  {
+    id: "skirmish-step",
+    name: "Skirmish Step",
+    type: "system",
+    cost: 1,
+    description: "Gain 6 block and deal 2 damage.",
+    effect() {
+      gainPlayerBlock(6 + state.player.shieldBonus, "Skirmish Step");
+      dealAttackDamageToEnemy(2, "Skirmish Step");
+    }
+  },
+  {
+    id: "pressure-shot",
+    name: "Pressure Shot",
+    type: "system",
+    cost: 1,
+    description: "Deal 3 damage. If you've played an attack this turn, deal 6 instead.",
+    effect() {
+      const baseDamage = state.attacksPlayedThisTurn > 0 ? 6 : 3;
+      dealAttackDamageToEnemy(baseDamage, "Pressure Shot");
+    }
+  },
+  {
+    id: "opportunist-strike",
+    name: "Opportunist Strike",
+    type: "system",
+    cost: 1,
+    description: "Deal 4 damage. If enemy has block, deal 8 instead.",
+    effect() {
+      const baseDamage = state.enemy.block > 0 ? 8 : 4;
+      dealAttackDamageToEnemy(baseDamage, "Opportunist Strike");
+    }
+  },
+  {
+    id: "execution-barrage",
+    name: "Execution Barrage",
+    type: "system",
+    cost: 2,
+    description: "Deal 7 damage. If enemy is below half hull, deal 11 instead.",
+    effect() {
+      const belowHalfHull = state.enemy.hull < state.enemy.maxHull / 2;
+      const baseDamage = belowHalfHull ? 11 : 7;
+      dealAttackDamageToEnemy(baseDamage, "Execution Barrage");
+    }
   }
 ];
 
@@ -156,7 +268,17 @@ const REWARD_POOL_IDS = [
   "capacitor-burst",
   "finishing-shot",
   "target-lock",
-  "collection-sweep"
+  "collection-sweep",
+  "tactical-scan",
+  "evasive-burst",
+  "deep-cache",
+  "reroute-power",
+  "overclock-drive",
+  "covering-fire",
+  "skirmish-step",
+  "pressure-shot",
+  "opportunist-strike",
+  "execution-barrage"
 ];
 
 const ENEMY_TYPES = [
@@ -198,6 +320,36 @@ const ENEMY_TYPES = [
         { type: "attack", amount: 6, text: "Attack for 6" },
         { type: "block", amount: 5, text: "Will gain 5 block" },
         { type: "attack", amount: 6, text: "Attack for 6" }
+      ];
+      return cycle[(turn - 1) % cycle.length];
+    }
+  },
+  {
+    id: "bulwark",
+    name: "Bulwark Corvette",
+    difficulty: "hard",
+    maxHull: 30,
+    getIntent(turn) {
+      const cycle = [
+        { type: "block", amount: 7, text: "Will gain 7 block" },
+        { type: "attack", amount: 5, text: "Attack for 5" },
+        { type: "block", amount: 7, text: "Will gain 7 block" },
+        { type: "attack", amount: 5, text: "Attack for 5" }
+      ];
+      return cycle[(turn - 1) % cycle.length];
+    }
+  },
+  {
+    id: "interceptor",
+    name: "Interceptor Ace",
+    difficulty: "hard",
+    maxHull: 18,
+    getIntent(turn) {
+      const cycle = [
+        { type: "attack", amount: 8, text: "Attack for 8" },
+        { type: "attack", amount: 8, text: "Attack for 8" },
+        { type: "block", amount: 2, text: "Will gain 2 block" },
+        { type: "attack", amount: 8, text: "Attack for 8" }
       ];
       return cycle[(turn - 1) % cycle.length];
     }
@@ -298,7 +450,9 @@ function showOverlay(title, text, buttonText, onClick) {
 function getEncounterTierLabel(index) {
   if (index === 0) return "Tier I - Scout skirmish";
   if (index === 1) return "Tier II - Raider assault";
-  return "Tier III - Hunter siege";
+  if (index === 2) return "Tier III - Bulwark duel";
+  if (index === 3) return "Tier IV - Interceptor burst";
+  return "Tier V - Hunter siege";
 }
 
 function awardEncounterCredits() {
@@ -386,13 +540,14 @@ function beginEncounter() {
 
   state.player.block = 0;
   state.nextAttackBonus = 0;
+  state.attacksPlayedThisTurn = 0;
   state.player.energy = state.player.baseEnergy + state.player.reactorBonus;
 
   hideOverlay();
 
   log(`Encounter ${state.encounterIndex + 1} begins against ${state.enemy.name}.`, "enemy");
 
-  drawCards(3);
+  drawCards(5);
   updateEnemyIntent();
   render();
 }
@@ -412,6 +567,7 @@ function startRun() {
   state.runDeck = makeRunDeck();
   state.runCredits = 0;
   state.nextAttackBonus = 0;
+  state.attacksPlayedThisTurn = 0;
   state.encounterIndex = 0;
   state.rewardChoices = [];
   state.pendingReward = false;
@@ -440,6 +596,7 @@ function dealAttackDamageToEnemy(baseAmount, sourceName) {
   const bonus = state.nextAttackBonus;
   const total = baseAmount + state.player.weaponBonus + bonus;
   dealDamageToEnemy(total, sourceName);
+  state.attacksPlayedThisTurn += 1;
   if (bonus > 0) {
     log(`Attack bonus consumed: +${bonus} damage.`, "system");
     state.nextAttackBonus = 0;
@@ -550,7 +707,7 @@ function playCard(uid) {
 
   removed.effect();
 
-  if (removed.type === "missile" || removed.type === "torpedo") {
+  if (removed.exhaust || removed.type === "missile" || removed.type === "torpedo") {
     state.exhaustPile.push(removed);
     log(`${removed.name} is exhausted.`, removed.type);
   } else {
@@ -603,11 +760,12 @@ function endTurn() {
   // Player block expires at the start of the new player turn
   state.player.block = 0;
   state.nextAttackBonus = 0;
+  state.attacksPlayedThisTurn = 0;
 
   state.player.energy = state.player.baseEnergy + state.player.reactorBonus;
 
   updateEnemyIntent();
-  drawCards(3);
+  drawCards(5);
   render();
 }
 
@@ -621,7 +779,7 @@ function redrawHand() {
 
   state.player.energy -= 1;
   discardHand();
-  drawCards(3);
+  drawCards(5);
   log("You spend 1 energy to redraw your hand.", "system");
   render();
 }
