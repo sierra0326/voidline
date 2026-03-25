@@ -2,7 +2,8 @@ console.log("game.js loaded");
 
 const state = {
   player: null,
-  enemy: null,
+  enemies: [],
+  selectedEnemyUid: null,
   runDeck: [],
   drawPile: [],
   discardPile: [],
@@ -12,17 +13,50 @@ const state = {
   runCredits: 0,
   nextAttackBonus: 0,
   attacksPlayedThisTurn: 0,
-  enemyAttackReduction: 0,
+  pendingExtraction: false,
   combatEnded: false,
   encounterIndex: 0,
+  encounterTier: "easy",
   runWon: false,
   rewardChoices: [],
   pendingReward: false
 };
 
 const SHIP_NAME = "Bounty Hunter";
-const SHIP_PASSIVE_TEXT = "Gain 15 credits after each encounter win.";
-const ENCOUNTER_CREDIT_REWARD = 15;
+const SHIP_PASSIVE_TEXT = "Gain credits after each encounter win.";
+const BASE_CREDIT_REWARD = 10;
+const CREDIT_REWARD_STEP = 5;
+
+const RUN_LENGTH = 5;
+
+const TIER_MULTIPLIER = {
+  easy: 1.0,
+  medium: 1.2,
+  hard: 1.4
+};
+
+function getAllowedTiersForEncounter(encounterIndex) {
+  switch (encounterIndex) {
+    case 0:
+      return ["easy"];
+    case 1:
+      return ["easy", "medium"];
+    case 2:
+      return ["medium"];
+    case 3:
+      return ["medium", "hard"];
+    default:
+      return ["hard"];
+  }
+}
+
+function pickRandom(array) {
+  return array[Math.floor(Math.random() * array.length)];
+}
+
+function formatIntentText(type, amount) {
+  return type === "attack" ? `Attack for ${amount}` : `Will gain ${amount} block`;
+}
 
 const SYSTEM_CARDS = [
   {
@@ -40,9 +74,9 @@ const SYSTEM_CARDS = [
     name: "Brace",
     type: "system",
     cost: 1,
-    description: "Gain 2 block.",
+    description: "Gain 4 block.",
     effect() {
-      gainPlayerBlock(2 + state.player.shieldBonus, "Brace");
+      gainPlayerBlock(4 + state.player.shieldBonus, "Brace");
     }
   },
   {
@@ -93,7 +127,9 @@ const SYSTEM_CARDS = [
     cost: 2,
     description: "Deal 8 damage. If enemy is below half hull, deal 12 instead.",
     effect() {
-      const belowHalfHull = state.enemy.hull < state.enemy.maxHull / 2;
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      const belowHalfHull = enemy.hull < enemy.maxHull / 2;
       const baseDamage = belowHalfHull ? 12 : 8;
       dealAttackDamageToEnemy(baseDamage, "Finishing Shot");
     }
@@ -183,7 +219,8 @@ const SYSTEM_CARDS = [
     cost: 1,
     description: "Reduce the enemy's next attack by 2. Draw 1 card.",
     effect() {
-      state.enemyAttackReduction += 2;
+      const enemy = getSelectedEnemy();
+      if (enemy) enemy.attackReduction = (enemy.attackReduction || 0) + 2;
       drawCards(1);
       log("Covering Fire reduces the enemy's next attack by 2.", "system");
     }
@@ -217,7 +254,9 @@ const SYSTEM_CARDS = [
     cost: 1,
     description: "Deal 4 damage. If enemy has block, deal 8 instead.",
     effect() {
-      const baseDamage = state.enemy.block > 0 ? 8 : 4;
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      const baseDamage = enemy.block > 0 ? 8 : 4;
       dealAttackDamageToEnemy(baseDamage, "Opportunist Strike");
     }
   },
@@ -240,8 +279,10 @@ const SYSTEM_CARDS = [
     description: "Deal 2 damage. Apply Mark.",
     effect() {
       dealAttackDamageToEnemy(2, "Hunter's Tag");
-      state.enemy.isMarked = true;
-      log("Enemy is Marked.", "system");
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.isMarked = true;
+      log("Mark applied — enemy is Marked.", "system");
     }
   },
   {
@@ -251,9 +292,11 @@ const SYSTEM_CARDS = [
     cost: 0,
     description: "Apply Mark. Draw 1 card.",
     effect() {
-      state.enemy.isMarked = true;
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.isMarked = true;
       drawCards(1);
-      log("Enemy is Marked.", "system");
+      log("Mark applied — enemy is Marked.", "system");
     }
   },
   {
@@ -264,8 +307,10 @@ const SYSTEM_CARDS = [
     description: "Gain 3 block. Apply Mark.",
     effect() {
       gainPlayerBlock(3 + state.player.shieldBonus, "Pursuit Sweep");
-      state.enemy.isMarked = true;
-      log("Enemy is Marked.", "system");
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.isMarked = true;
+      log("Mark applied — enemy is Marked.", "system");
     }
   },
   {
@@ -275,7 +320,9 @@ const SYSTEM_CARDS = [
     cost: 1,
     description: "Deal 4 damage. If Marked, deal 8 instead.",
     effect() {
-      const baseDamage = state.enemy.isMarked ? 8 : 4;
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      const baseDamage = enemy.isMarked ? 8 : 4;
       dealAttackDamageToEnemy(baseDamage, "Claim Shot");
     }
   },
@@ -286,8 +333,10 @@ const SYSTEM_CARDS = [
     cost: 2,
     description: "Deal 7 damage. If Marked, gain 1 energy.",
     effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
       dealAttackDamageToEnemy(7, "Bounty Collection");
-      if (state.enemy.isMarked) {
+      if (enemy.isMarked) {
         state.player.energy += 1;
         log("Bounty Collection grants 1 energy on a Marked target.", "system");
       }
@@ -300,7 +349,9 @@ const SYSTEM_CARDS = [
     cost: 2,
     description: "Deal 6 damage. If Marked, gain 6 block and deal 9 instead.",
     effect() {
-      if (state.enemy.isMarked) {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      if (enemy.isMarked) {
         gainPlayerBlock(6 + state.player.shieldBonus, "Dead or Alive");
         dealAttackDamageToEnemy(9, "Dead or Alive");
       } else {
@@ -315,11 +366,56 @@ const SYSTEM_CARDS = [
     cost: 1,
     description: "Deal 3 damage. If enemy is not Marked, apply Mark.",
     effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
       dealAttackDamageToEnemy(3, "Tracking Burst");
-      if (!state.enemy.isMarked) {
-        state.enemy.isMarked = true;
-        log("Enemy is Marked.", "system");
+      if (!enemy.isMarked) {
+        enemy.isMarked = true;
+        log("Mark applied — enemy is Marked.", "system");
       }
+    }
+  },
+  {
+    id: "signal-flare",
+    name: "Signal Flare",
+    type: "system",
+    cost: 1,
+    description: "Apply Mark. Gain 1 energy.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.isMarked = true;
+      state.player.energy += 1;
+      log("Mark applied — enemy is Marked.", "system");
+      log("Signal Flare grants 1 energy.", "system");
+    }
+  },
+  {
+    id: "glint-strike",
+    name: "Glint Strike",
+    type: "system",
+    cost: 1,
+    description: "Deal 1 damage. Apply Mark.",
+    effect() {
+      dealAttackDamageToEnemy(1, "Glint Strike");
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.isMarked = true;
+      log("Mark applied — enemy is Marked.", "system");
+    }
+  },
+  {
+    id: "hard-lock",
+    name: "Hard Lock",
+    type: "system",
+    cost: 2,
+    description: "Apply Mark. Draw 2 cards.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.isMarked = true;
+      drawCards(2);
+      log("Mark applied — enemy is Marked.", "system");
     }
   }
 ];
@@ -338,6 +434,47 @@ const MISSILE_CARDS = [
 ];
 
 const ALL_CARDS = [...SYSTEM_CARDS, ...MISSILE_CARDS];
+
+/** UI / archetype: weapon (damage), system (defense/draw/utility), tactical (setup / Mark / synergy) */
+const CARD_ROLE_BY_ID = {
+  "pulse-shot": "weapon",
+  "overcharge-cannon": "weapon",
+  "finishing-shot": "weapon",
+  "pressure-shot": "weapon",
+  "opportunist-strike": "weapon",
+  "execution-barrage": "weapon",
+  "claim-shot": "weapon",
+  "bounty-collection": "weapon",
+  "dead-or-alive": "weapon",
+  missile: "weapon",
+  brace: "system",
+  "patch-hull": "system",
+  "reinforce-shields": "system",
+  "capacitor-burst": "system",
+  "tactical-scan": "system",
+  "evasive-burst": "system",
+  "deep-cache": "system",
+  "reroute-power": "system",
+  "overclock-drive": "system",
+  "covering-fire": "system",
+  "skirmish-step": "system",
+  "collection-sweep": "system",
+  "target-lock": "tactical",
+  "hunters-tag": "tactical",
+  "paint-the-target": "tactical",
+  "pursuit-sweep": "tactical",
+  "tracking-burst": "tactical",
+  "signal-flare": "tactical",
+  "glint-strike": "tactical",
+  "hard-lock": "tactical"
+};
+
+function getCardCategoryLabel(card) {
+  const role = card.cardRole || "system";
+  if (role === "weapon") return "Weapon";
+  if (role === "tactical") return "Tactical";
+  return "System";
+}
 
 const STARTING_DECK_IDS = [
   "pulse-shot",
@@ -376,7 +513,10 @@ const REWARD_POOL_IDS = [
   "claim-shot",
   "bounty-collection",
   "dead-or-alive",
-  "tracking-burst"
+  "tracking-burst",
+  "signal-flare",
+  "glint-strike",
+  "hard-lock"
 ];
 
 const ENEMY_TYPES = [
@@ -451,6 +591,34 @@ const ENEMY_TYPES = [
       ];
       return cycle[(turn - 1) % cycle.length];
     }
+  },
+  {
+    id: "support-escort",
+    name: "Support Escort",
+    difficulty: "hard",
+    maxHull: 16,
+    getIntent(turn) {
+      const cycle = [
+        { type: "block", amount: 6, text: "Will gain 6 block" },
+        { type: "block", amount: 6, text: "Will gain 6 block" },
+        { type: "attack", amount: 4, text: "Attack for 4" }
+      ];
+      return cycle[(turn - 1) % cycle.length];
+    }
+  },
+  {
+    id: "burst-bounty",
+    name: "Burst Bounty",
+    difficulty: "hard",
+    maxHull: 20,
+    getIntent(turn) {
+      const cycle = [
+        { type: "attack", amount: 9, text: "Attack for 9" },
+        { type: "attack", amount: 9, text: "Attack for 9" },
+        { type: "block", amount: 2, text: "Will gain 2 block" }
+      ];
+      return cycle[(turn - 1) % cycle.length];
+    }
   }
 ];
 
@@ -474,14 +642,7 @@ const els = {
   discardCount: document.getElementById("discardCount"),
   exhaustCount: document.getElementById("exhaustCount"),
 
-  enemyName: document.getElementById("enemyName"),
-  enemyDifficulty: document.getElementById("enemyDifficulty"),
-  enemyHullText: document.getElementById("enemyHullText"),
-  enemyHullBar: document.getElementById("enemyHullBar"),
-  enemyBlockText: document.getElementById("enemyBlockText"),
-  enemyMarkText: document.getElementById("enemyMarkText"),
-  enemyIntentText: document.getElementById("enemyIntentText"),
-  enemyIntentDetail: document.getElementById("enemyIntentDetail"),
+  enemies: document.getElementById("enemies"),
   encounterInfo: document.getElementById("encounterInfo"),
 
   hand: document.getElementById("hand"),
@@ -494,12 +655,88 @@ const els = {
   rewardOptions: document.getElementById("rewardOptions")
 };
 
+function renderEnemies() {
+  if (!els.enemies) return;
+  els.enemies.innerHTML = "";
+
+  state.enemies.forEach(enemy => {
+    const isAlive = enemy.hull > 0;
+    const isSelected = enemy.uid === state.selectedEnemyUid;
+    const intentText =
+      !state.combatEnded && isAlive && enemy.intent ? enemy.intent.text : isAlive ? "—" : "Destroyed";
+    const intentDetail =
+      !state.combatEnded && isAlive && enemy.intent
+        ? getIntentDescription(enemy.intent)
+        : isAlive
+        ? "—"
+        : `${enemy.name} has been eliminated.`;
+
+    const roleBadge =
+      enemy.role === "bounty"
+        ? `<span class="badge bounty-badge">BOUNTY</span>`
+        : `<span class="badge escort-badge">ESCORT</span>`;
+
+    const markBadge = enemy.isMarked ? `<span class="badge mark-badge">MARKED</span>` : "";
+
+    const card = document.createElement("div");
+    card.className = `enemy-card ${isSelected ? "selected" : ""}`.trim();
+    card.innerHTML = `
+      <div class="enemy-head">
+        <div>
+          <div class="value">${enemy.name}</div>
+          <div class="muted">${enemy.difficulty.toUpperCase()}</div>
+        </div>
+        <div class="enemy-badges">
+          ${roleBadge}
+          ${markBadge}
+        </div>
+      </div>
+
+      <div class="enemy-mini-grid">
+        <div class="enemy-mini">
+          <div class="label">Hull</div>
+          <div class="value">${enemy.hull} / ${enemy.maxHull}</div>
+          <div class="bar">
+            <div class="bar-fill enemy-fill" style="width: ${(enemy.hull / enemy.maxHull) * 100}%"></div>
+          </div>
+        </div>
+        <div class="enemy-mini">
+          <div class="label">Block</div>
+          <div class="value">${enemy.block}</div>
+        </div>
+        <div class="enemy-mini">
+          <div class="label">Mark</div>
+          <div class="value">${enemy.isMarked ? "MARKED" : "CLEAR"}</div>
+        </div>
+        <div class="enemy-mini">
+          <div class="label">Target</div>
+          <button ${isAlive ? "" : "disabled"}>${isSelected ? "Targeted" : "Target"}</button>
+        </div>
+      </div>
+
+      <div class="enemy-intent">
+        <div class="label">Next Enemy Action</div>
+        <div class="value">${intentText}</div>
+        <div class="muted">${intentDetail}</div>
+      </div>
+    `;
+
+    const btn = card.querySelector("button");
+    btn.addEventListener("click", () => selectEnemy(enemy.uid));
+
+    els.enemies.appendChild(card);
+  });
+}
+
 function makeCard(id) {
   const base = ALL_CARDS.find(card => card.id === id);
   if (!base) throw new Error(`Card not found: ${id}`);
 
+  const cardRole = base.cardRole ?? CARD_ROLE_BY_ID[id] ?? "system";
+
   return {
     ...base,
+    cardRole,
     uid: `${id}-${Math.random().toString(36).slice(2, 10)}`
   };
 }
@@ -526,6 +763,52 @@ function log(message, type = "") {
   entry.className = `log-entry ${type}`.trim();
   entry.textContent = message;
   els.log.prepend(entry);
+}
+
+function getAliveEnemies() {
+  return state.enemies.filter(e => e.hull > 0);
+}
+
+function getEnemyByUid(uid) {
+  return state.enemies.find(e => e.uid === uid) || null;
+}
+
+function getDefaultTargetUid() {
+  const alive = getAliveEnemies();
+  const bounty = alive.find(e => e.role === "bounty");
+  return (bounty || alive[0] || null)?.uid ?? null;
+}
+
+function getSelectedEnemy() {
+  const selected = state.selectedEnemyUid ? getEnemyByUid(state.selectedEnemyUid) : null;
+  if (selected && selected.hull > 0) return selected;
+  const fallbackUid = getDefaultTargetUid();
+  if (fallbackUid) state.selectedEnemyUid = fallbackUid;
+  return fallbackUid ? getEnemyByUid(fallbackUid) : null;
+}
+
+function selectEnemy(uid) {
+  const enemy = getEnemyByUid(uid);
+  if (!enemy || enemy.hull <= 0) return;
+  state.selectedEnemyUid = uid;
+  render();
+}
+
+function getBountyTargets() {
+  return state.enemies.filter(e => e.role === "bounty");
+}
+
+function allBountyTargetsDead() {
+  const bounty = getBountyTargets();
+  return bounty.length > 0 && bounty.every(e => e.hull <= 0);
+}
+
+function anyEscortAlive() {
+  return state.enemies.some(e => e.role === "escort" && e.hull > 0);
+}
+
+function allEnemiesDead() {
+  return state.enemies.length > 0 && state.enemies.every(e => e.hull <= 0);
 }
 
 function hideOverlay() {
@@ -555,8 +838,9 @@ function getEncounterTierLabel(index) {
 }
 
 function awardEncounterCredits() {
-  state.runCredits += ENCOUNTER_CREDIT_REWARD;
-  log(`Bounty collected: +${ENCOUNTER_CREDIT_REWARD} credits. Total credits: ${state.runCredits}.`, "system");
+  const amount = getCreditRewardForEncounter(state.encounterIndex);
+  state.runCredits += amount;
+  log(`Credits gained: +${amount}. Total credits: ${state.runCredits}.`, "system");
 }
 
 function buildRewardChoices() {
@@ -564,11 +848,25 @@ function buildRewardChoices() {
   return pool.slice(0, 3);
 }
 
+function getCreditRewardForEncounter(encounterIndex) {
+  return BASE_CREDIT_REWARD + CREDIT_REWARD_STEP * encounterIndex;
+}
+
 function continueToNextEncounter() {
   state.pendingReward = false;
+  state.pendingExtraction = false;
   state.rewardChoices = [];
   state.encounterIndex += 1;
   beginEncounter();
+}
+
+function chooseCreditsReward() {
+  awardEncounterCredits();
+  continueToNextEncounter();
+}
+
+function chooseCardReward() {
+  showRewardOverlay();
 }
 
 function chooseReward(cardId) {
@@ -599,35 +897,189 @@ function showRewardOverlay() {
     button.className = "reward-option";
     button.innerHTML = `
       <div class="reward-name">${card.name}</div>
-      <div class="reward-meta">${card.type.toUpperCase()} • Cost ${card.cost} • ${card.description}</div>
+      <div class="reward-meta">${getCardCategoryLabel(card)} • Cost ${card.cost} • ${card.description}</div>
     `;
     button.addEventListener("click", () => chooseReward(cardId));
     els.rewardOptions.appendChild(button);
   });
 }
 
-function getCurrentEnemyTemplate() {
-  return ENEMY_TYPES[Math.min(state.encounterIndex, ENEMY_TYPES.length - 1)];
+function showPostVictoryChoiceOverlay() {
+  state.pendingReward = true;
+
+  const creditReward = getCreditRewardForEncounter(state.encounterIndex);
+
+  els.overlayTitle.textContent = "Encounter Won";
+  els.overlayText.textContent = "Choose your reward.";
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  const cardBtn = document.createElement("button");
+  cardBtn.className = "reward-option";
+  cardBtn.innerHTML = `
+    <div class="reward-name">Take Card Reward</div>
+    <div class="reward-meta">Pick 1 of 3 cards to add to your deck.</div>
+  `;
+  cardBtn.addEventListener("click", chooseCardReward);
+
+  const creditsBtn = document.createElement("button");
+  creditsBtn.className = "reward-option";
+  creditsBtn.innerHTML = `
+    <div class="reward-name">Take Credits</div>
+    <div class="reward-meta">Gain ${creditReward} credits and continue.</div>
+  `;
+  creditsBtn.addEventListener("click", chooseCreditsReward);
+
+  els.rewardOptions.appendChild(cardBtn);
+  els.rewardOptions.appendChild(creditsBtn);
 }
 
-function buildEnemyFromTemplate(template) {
+function buildEnemyFromTemplate(template, role, tier) {
+  const mult = TIER_MULTIPLIER[tier] ?? 1;
+  const scaledMaxHull = Math.round(template.maxHull * mult);
+  const baseGetIntent = template.getIntent;
+
+  function scaledGetIntent(turn) {
+    const base = baseGetIntent(turn);
+    const scaledAmount = Math.max(0, Math.round(base.amount * mult));
+    return {
+      ...base,
+      amount: scaledAmount,
+      text: formatIntentText(base.type, scaledAmount)
+    };
+  }
+
   return {
+    uid: `${template.id}-${Math.random().toString(36).slice(2, 10)}`,
     id: template.id,
     name: template.name,
-    difficulty: template.difficulty,
-    maxHull: template.maxHull,
-    hull: template.maxHull,
+    difficulty: tier,
+    maxHull: scaledMaxHull,
+    hull: scaledMaxHull,
     block: 0,
     isMarked: false,
-    getIntent: template.getIntent,
-    intent: template.getIntent(1)
+    role,
+    attackReduction: 0,
+    getIntent: scaledGetIntent,
+    intent: scaledGetIntent(1)
   };
 }
 
-function beginEncounter() {
-  const template = getCurrentEnemyTemplate();
+function getEnemyTypeById(id) {
+  return ENEMY_TYPES.find(e => e.id === id) || null;
+}
 
-  state.enemy = buildEnemyFromTemplate(template);
+const ENCOUNTER_TEMPLATES = [
+  {
+    id: "duel",
+    tier: "easy",
+    build(encounterIndex, tier) {
+      const bounty = ENEMY_TYPES[Math.min(encounterIndex + 1, ENEMY_TYPES.length - 1)];
+      return [buildEnemyFromTemplate(bounty, "bounty", tier)];
+    }
+  },
+  {
+    id: "protected",
+    tier: "medium",
+    build(encounterIndex, tier) {
+      const bounty = ENEMY_TYPES[Math.min(encounterIndex + 2, ENEMY_TYPES.length - 1)];
+      const escort = ENEMY_TYPES[0];
+      return [buildEnemyFromTemplate(bounty, "bounty", tier), buildEnemyFromTemplate(escort, "escort", tier)];
+    }
+  },
+  {
+    id: "double",
+    tier: "medium",
+    build(encounterIndex, tier) {
+      const bounty = ENEMY_TYPES[Math.min(encounterIndex + 1, ENEMY_TYPES.length - 1)];
+      return [buildEnemyFromTemplate(bounty, "bounty", tier), buildEnemyFromTemplate(bounty, "bounty", tier)];
+    }
+  },
+  {
+    id: "protected-hard",
+    tier: "hard",
+    build(encounterIndex, tier) {
+      const bounty = ENEMY_TYPES[Math.min(encounterIndex + 2, ENEMY_TYPES.length - 1)];
+      const escort = getEnemyTypeById("support-escort") || ENEMY_TYPES[0];
+      return [buildEnemyFromTemplate(bounty, "bounty", tier), buildEnemyFromTemplate(escort, "escort", tier)];
+    }
+  },
+  {
+    id: "double-hard",
+    tier: "hard",
+    build(encounterIndex, tier) {
+      const steady = ENEMY_TYPES[Math.min(encounterIndex + 1, ENEMY_TYPES.length - 1)];
+      const burst = getEnemyTypeById("burst-bounty") || steady;
+      return [buildEnemyFromTemplate(burst, "bounty", tier), buildEnemyFromTemplate(steady, "bounty", tier)];
+    }
+  }
+];
+
+function getEncounterTemplatesForTier(tier) {
+  if (tier === "easy") return ENCOUNTER_TEMPLATES.filter(t => t.id === "duel");
+  if (tier === "medium") return ENCOUNTER_TEMPLATES.filter(t => t.id === "duel" || t.id === "protected" || t.id === "double");
+  return ENCOUNTER_TEMPLATES.filter(t => t.id === "protected-hard" || t.id === "double-hard");
+}
+
+function getCurrentEncounterTemplate(tier) {
+  const pool = getEncounterTemplatesForTier(tier);
+  return pickRandom(pool);
+}
+
+function showExtractionOverlay() {
+  state.pendingExtraction = true;
+  state.pendingReward = true;
+
+  els.overlayTitle.textContent = "Bounty Secured";
+  els.overlayText.textContent =
+    "All bounty targets are down. Extract now, or stay and finish the escorts.";
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  const extractBtn = document.createElement("button");
+  extractBtn.className = "reward-option";
+  extractBtn.innerHTML = `
+    <div class="reward-name">Extract Now</div>
+    <div class="reward-meta">End encounter immediately. Escorts won't act.</div>
+  `;
+  extractBtn.addEventListener("click", () => {
+    state.pendingExtraction = false;
+    state.pendingReward = false;
+    state.combatEnded = true;
+    hideOverlay();
+    render();
+    handleCombatEnd();
+  });
+
+  const continueBtn = document.createElement("button");
+  continueBtn.className = "reward-option";
+  continueBtn.innerHTML = `
+    <div class="reward-name">Finish the Escorts</div>
+    <div class="reward-meta">Continue combat. Escorts will keep acting.</div>
+  `;
+  continueBtn.addEventListener("click", () => {
+    state.pendingExtraction = false;
+    state.pendingReward = false;
+    hideOverlay();
+    render();
+  });
+
+  els.rewardOptions.appendChild(extractBtn);
+  els.rewardOptions.appendChild(continueBtn);
+}
+
+function beginEncounter() {
+  const allowed = getAllowedTiersForEncounter(state.encounterIndex);
+  const tier = pickRandom(allowed);
+  state.encounterTier = tier;
+
+  const template = getCurrentEncounterTemplate(tier);
+  state.enemies = template.build(state.encounterIndex, tier).slice(0, 2);
+  state.selectedEnemyUid = getDefaultTargetUid();
   state.drawPile = shuffle(state.runDeck.map(id => makeCard(id)));
   state.discardPile = [];
   state.exhaustPile = [];
@@ -636,17 +1088,17 @@ function beginEncounter() {
   state.combatEnded = false;
   state.runWon = false;
   state.pendingReward = false;
+  state.pendingExtraction = false;
   state.rewardChoices = [];
 
   state.player.block = 0;
   state.nextAttackBonus = 0;
   state.attacksPlayedThisTurn = 0;
-  state.enemyAttackReduction = 0;
   state.player.energy = state.player.baseEnergy + state.player.reactorBonus;
 
   hideOverlay();
 
-  log(`Encounter ${state.encounterIndex + 1} begins against ${state.enemy.name}.`, "enemy");
+  log(`Encounter ${state.encounterIndex + 1} begins (${tier.toUpperCase()}).`, "enemy");
 
   drawCards(5);
   updateEnemyIntent();
@@ -655,8 +1107,8 @@ function beginEncounter() {
 
 function startRun() {
   state.player = {
-    maxHull: 14,
-    hull: 14,
+    maxHull: 50,
+    hull: 50,
     block: 0,
     baseEnergy: 3,
     energy: 3,
@@ -669,7 +1121,7 @@ function startRun() {
   state.runCredits = 0;
   state.nextAttackBonus = 0;
   state.attacksPlayedThisTurn = 0;
-  state.enemyAttackReduction = 0;
+  state.pendingExtraction = false;
   state.encounterIndex = 0;
   state.rewardChoices = [];
   state.pendingReward = false;
@@ -683,7 +1135,9 @@ function gainPlayerBlock(amount, sourceName) {
 }
 
 function gainEnemyBlock(amount, sourceName) {
-  state.enemy.block += amount;
+  const enemy = state.enemies.find(e => e.name === sourceName && e.hull > 0) || state.enemies[0];
+  if (!enemy) return;
+  enemy.block += amount;
   log(`${sourceName} gains ${amount} block.`, "enemy");
 }
 
@@ -706,11 +1160,14 @@ function dealAttackDamageToEnemy(baseAmount, sourceName) {
 }
 
 function dealDamageToEnemy(amount, sourceName) {
-  const blocked = Math.min(state.enemy.block, amount);
+  const enemy = getSelectedEnemy();
+  if (!enemy) return;
+
+  const blocked = Math.min(enemy.block, amount);
   const hpDamage = amount - blocked;
 
-  state.enemy.block -= blocked;
-  state.enemy.hull = Math.max(0, state.enemy.hull - hpDamage);
+  enemy.block -= blocked;
+  enemy.hull = Math.max(0, enemy.hull - hpDamage);
 
   if (blocked > 0 && hpDamage > 0) {
     log(`${sourceName} hits for ${amount}. Enemy blocks ${blocked} and takes ${hpDamage}.`);
@@ -720,15 +1177,22 @@ function dealDamageToEnemy(amount, sourceName) {
     log(`${sourceName} deals ${hpDamage} damage.`, sourceName === "Missile" ? "missile" : "");
   }
 
-  if (state.enemy.hull <= 0) {
-    state.combatEnded = true;
-    awardEncounterCredits();
+  if (enemy.hull <= 0) {
+    log(`${enemy.name} is destroyed.`, "system");
+  }
 
-    if (state.encounterIndex >= ENEMY_TYPES.length - 1) {
+  if (!state.combatEnded && allBountyTargetsDead() && anyEscortAlive() && !state.pendingExtraction) {
+    showExtractionOverlay();
+    return;
+  }
+
+  if (allEnemiesDead()) {
+    state.combatEnded = true;
+    if (state.encounterIndex >= RUN_LENGTH - 1) {
       state.runWon = true;
-      log(`${state.enemy.name} is destroyed. Run complete.`, "system");
+      log("All targets eliminated. Run complete.", "system");
     } else {
-      log(`${state.enemy.name} is destroyed. Encounter won.`, "system");
+      log("Encounter cleared.", "system");
     }
   }
 }
@@ -780,8 +1244,11 @@ function removeCardFromHand(uid) {
 }
 
 function updateEnemyIntent() {
-  if (!state.enemy || state.combatEnded) return;
-  state.enemy.intent = state.enemy.getIntent(state.turn);
+  if (state.combatEnded) return;
+  state.enemies.forEach(enemy => {
+    if (enemy.hull <= 0) return;
+    enemy.intent = enemy.getIntent(state.turn);
+  });
 }
 
 function getIntentDescription(intent) {
@@ -796,7 +1263,7 @@ function getIntentDescription(intent) {
 }
 
 function playCard(uid) {
-  if (state.combatEnded) return;
+  if (state.combatEnded || state.pendingReward || state.pendingExtraction) return;
 
   const card = state.hand.find(c => c.uid === uid);
   if (!card) return;
@@ -825,39 +1292,48 @@ function playCard(uid) {
 
 function resolveEnemyTurn() {
   if (state.combatEnded) return;
+  const alive = getAliveEnemies();
+  alive.forEach(enemy => {
+    const intent = enemy.intent;
+    if (!intent) return;
 
-  const intent = state.enemy.intent;
-  if (!intent) return;
-
-  switch (intent.type) {
-    case "attack":
-      {
-        const reduction = state.enemyAttackReduction;
+    switch (intent.type) {
+      case "attack": {
+        const reduction = enemy.attackReduction || 0;
         const finalAmount = Math.max(0, intent.amount - reduction);
         if (reduction > 0) {
-          log(`Enemy attack reduced by ${reduction}.`, "system");
+          log(`${enemy.name}'s attack reduced by ${reduction}.`, "system");
         }
-        dealDamageToPlayer(finalAmount, state.enemy.name);
+        dealDamageToPlayer(finalAmount, enemy.name);
+        break;
       }
-      break;
 
-    case "block":
-      gainEnemyBlock(intent.amount, state.enemy.name);
-      break;
-  }
+      case "block":
+        gainEnemyBlock(intent.amount, enemy.name);
+        break;
+    }
 
-  state.enemyAttackReduction = 0;
-  state.enemy.isMarked = false;
+    enemy.attackReduction = 0;
+  });
+
+  alive.forEach(enemy => {
+    if (enemy.isMarked) {
+      log(`Mark clears from ${enemy.name} at end of enemy turn.`, "enemy");
+    }
+    enemy.isMarked = false;
+  });
 }
 
 function endTurn() {
-  if (state.combatEnded || state.pendingReward) return;
+  if (state.combatEnded || state.pendingReward || state.pendingExtraction) return;
 
   discardHand();
   log("You end your turn.");
 
-  // Enemy's previous block expires at the start of its turn
-  state.enemy.block = 0;
+  // Enemy block expires at the start of enemy turn
+  state.enemies.forEach(enemy => {
+    enemy.block = 0;
+  });
 
   resolveEnemyTurn();
 
@@ -882,7 +1358,7 @@ function endTurn() {
 }
 
 function redrawHand() {
-  if (state.combatEnded || state.pendingReward) return;
+  if (state.combatEnded || state.pendingReward || state.pendingExtraction) return;
 
   if (state.player.energy < 1) {
     log("You need 1 energy to redraw.", "system");
@@ -917,7 +1393,7 @@ function handleCombatEnd() {
     return;
   }
 
-  showRewardOverlay();
+  showPostVictoryChoiceOverlay();
 }
 
 function renderHand() {
@@ -943,14 +1419,10 @@ function renderHand() {
     const canPlay = !state.combatEnded && card.cost <= state.player.energy;
 
     const cardEl = document.createElement("div");
-    cardEl.className = `card ${card.type} ${canPlay ? "" : "disabled"}`.trim();
+    const role = card.cardRole || "system";
+    cardEl.className = `card ${card.type} role-${role} ${canPlay ? "" : "disabled"}`.trim();
 
-    const typeLabel =
-      card.type === "system"
-        ? "System"
-        : card.type === "missile"
-        ? "Missile"
-        : "Torpedo";
+    const typeLabel = getCardCategoryLabel(card);
 
     cardEl.innerHTML = `
       <div class="card-top">
@@ -985,26 +1457,13 @@ function render() {
   els.discardCount.textContent = state.discardPile.length;
   els.exhaustCount.textContent = state.exhaustPile.length;
 
-  els.enemyName.textContent = state.enemy.name;
-  els.enemyDifficulty.textContent = state.enemy.difficulty.toUpperCase();
-  els.enemyHullText.textContent = `${state.enemy.hull} / ${state.enemy.maxHull}`;
-  els.enemyHullBar.style.width = `${(state.enemy.hull / state.enemy.maxHull) * 100}%`;
-  els.enemyBlockText.textContent = state.enemy.block;
-  els.enemyMarkText.textContent = state.enemy.isMarked ? "MARKED" : "CLEAR";
-  els.encounterInfo.textContent = `${state.encounterIndex + 1} / ${ENEMY_TYPES.length} • ${getEncounterTierLabel(state.encounterIndex)}`;
-
-  if (state.combatEnded) {
-    if (state.player.hull <= 0) {
-      els.enemyIntentText.textContent = "Defeat";
-      els.enemyIntentDetail.textContent = "Your ship has been destroyed.";
-    } else {
-      els.enemyIntentText.textContent = "Destroyed";
-      els.enemyIntentDetail.textContent = `${state.enemy.name} has been eliminated.`;
-    }
-  } else {
-    els.enemyIntentText.textContent = state.enemy.intent.text;
-    els.enemyIntentDetail.textContent = getIntentDescription(state.enemy.intent);
+  const aliveCount = getAliveEnemies().length;
+  const totalCount = state.enemies.length;
+  if (els.encounterInfo) {
+    els.encounterInfo.textContent = `${state.encounterIndex + 1} / ${RUN_LENGTH} • ${state.encounterTier.toUpperCase()} • Enemies ${aliveCount} / ${totalCount}`;
   }
+
+  renderEnemies();
 
   els.endTurnBtn.disabled = state.combatEnded;
   els.redrawBtn.disabled = state.combatEnded;

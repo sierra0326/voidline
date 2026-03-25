@@ -86,6 +86,24 @@ button.primary {
   background: rgba(255, 132, 132, 0.08);
 }
 
+.enemy-panel-head {
+  flex-wrap: wrap;
+}
+
+.enemy-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.mark-badge {
+  color: #ffd36a;
+  border: 1px solid rgba(255, 211, 106, 0.45);
+  background: rgba(255, 211, 106, 0.12);
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -133,6 +151,75 @@ button.primary {
 
 .enemy-fill {
   background: linear-gradient(90deg, #ff9c73, #ff7373);
+}
+
+.enemies {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.enemy-card {
+  border: 1px solid #2f4d7a;
+  border-radius: 16px;
+  padding: 14px;
+  background: rgba(10, 20, 40, 0.45);
+}
+
+.enemy-card.selected {
+  border-color: rgba(255, 211, 106, 0.6);
+  box-shadow: 0 0 0 2px rgba(255, 211, 106, 0.14);
+}
+
+.enemy-card .enemy-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.enemy-card .enemy-badges {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.bounty-badge {
+  color: #ffd36a;
+  border: 1px solid rgba(255, 211, 106, 0.45);
+  background: rgba(255, 211, 106, 0.12);
+}
+
+.escort-badge {
+  color: #79bcff;
+  border: 1px solid rgba(121, 188, 255, 0.35);
+  background: rgba(121, 188, 255, 0.08);
+}
+
+.enemy-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.enemy-mini {
+  border: 1px solid #375a8c;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.enemy-mini .label {
+  margin-bottom: 6px;
+}
+
+.enemy-intent {
+  margin-top: 10px;
+  border: 1px solid #375a8c;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  padding: 10px;
 }
 
 .intent-box {
@@ -251,6 +338,21 @@ button.primary {
 .card.torpedo .card-type {
   background: rgba(255, 211, 106, 0.12);
   color: #ffd36a;
+}
+
+.card.role-weapon .card-type {
+  background: rgba(255, 132, 132, 0.14);
+  color: #ff9c9c;
+}
+
+.card.role-tactical .card-type {
+  background: rgba(186, 150, 255, 0.14);
+  color: #c9b3ff;
+}
+
+.card.role-system .card-type {
+  background: rgba(116, 255, 211, 0.12);
+  color: #74ffd3;
 }
 
 .card-text {
