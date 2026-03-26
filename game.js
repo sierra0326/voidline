@@ -19,20 +19,262 @@ const state = {
   encounterTier: "easy",
   runWon: false,
   rewardChoices: [],
-  pendingReward: false
+  pendingReward: false,
+  ambushEncounter: false,
+  victoryFuelGranted: false,
+  pendingPlanetAlienAmbush: false,
+  planetAlienAmbushCombat: false,
+  pendingEliteContract: false,
+  eliteContractCombat: false,
+  mapNodes: [],
+  currentNodeId: null,
+  visitedNodeIds: [],
+  clearedNodeIds: [],
+  currentScreen: "combat",
+  sectorNumber: 1,
+  gateUnlocked: false,
+  inBossCombat: false,
+  pendingBoss: false
 };
 
 const SHIP_NAME = "Bounty Hunter";
 const SHIP_PASSIVE_TEXT = "Gain credits after each encounter win.";
 const BASE_CREDIT_REWARD = 10;
 const CREDIT_REWARD_STEP = 5;
+const ELITE_CLEAR_BONUS = 15;
 
 const RUN_LENGTH = 5;
+
+function rollNextNodeType() {
+  const r = Math.random() * 100;
+  if (r < 50) return "combat";
+  if (r < 70) return "dock";
+  if (r < 90) return "planet";
+  return "elite";
+}
+
+function createSector1() {
+  return [
+    { id: "A", type: "combat", danger: "easy", neighbors: ["B", "C"], x: 90, y: 180 },
+    { id: "B", type: "dock", neighbors: ["A", "D", "E"], x: 220, y: 110 },
+    { id: "C", type: "planet", neighbors: ["A", "F"], x: 220, y: 250 },
+    { id: "D", type: "combat", danger: "medium", neighbors: ["B", "G"], x: 360, y: 70 },
+    { id: "E", type: "combat", danger: "medium", neighbors: ["B", "G", "H"], x: 360, y: 160 },
+    { id: "F", type: "combat", danger: "medium", neighbors: ["C", "H"], x: 360, y: 270 },
+    { id: "G", type: "dock", neighbors: ["D", "E", "I"], x: 500, y: 110 },
+    { id: "H", type: "planet", neighbors: ["E", "F", "J"], x: 500, y: 230 },
+    { id: "I", type: "elite", danger: "elite", neighbors: ["G", "J"], x: 640, y: 90 },
+    { id: "J", type: "gate", neighbors: ["H", "I"], x: 640, y: 220 }
+  ];
+}
+
+function createSector2() {
+  return [
+    { id: "A", type: "combat", danger: "easy", neighbors: ["B", "C"], x: 90, y: 180 },
+    { id: "B", type: "combat", danger: "medium", neighbors: ["A", "D", "E"], x: 220, y: 110 },
+    { id: "C", type: "dock", neighbors: ["A", "F"], x: 220, y: 250 },
+    { id: "D", type: "planet", neighbors: ["B", "G"], x: 360, y: 70 },
+    { id: "E", type: "combat", danger: "medium", neighbors: ["B", "G", "H"], x: 360, y: 160 },
+    { id: "F", type: "combat", danger: "medium", neighbors: ["C", "H"], x: 360, y: 270 },
+    { id: "G", type: "dock", neighbors: ["D", "E", "I"], x: 500, y: 110 },
+    { id: "H", type: "planet", neighbors: ["E", "F", "J"], x: 500, y: 230 },
+    { id: "I", type: "elite", danger: "elite", neighbors: ["G", "J"], x: 640, y: 90 },
+    { id: "J", type: "gate", neighbors: ["H", "I"], x: 640, y: 220 }
+  ];
+}
+
+function createSector3() {
+  return [
+    { id: "A", type: "combat", danger: "easy", neighbors: ["B", "C"], x: 90, y: 180 },
+    { id: "B", type: "combat", danger: "medium", neighbors: ["A", "D"], x: 220, y: 110 },
+    { id: "C", type: "planet", neighbors: ["A", "E"], x: 220, y: 250 },
+    { id: "D", type: "dock", neighbors: ["B", "F"], x: 360, y: 80 },
+    { id: "E", type: "combat", danger: "medium", neighbors: ["C", "F", "G"], x: 360, y: 210 },
+    { id: "F", type: "combat", danger: "medium", neighbors: ["D", "E", "H"], x: 500, y: 110 },
+    { id: "G", type: "planet", neighbors: ["E", "I"], x: 500, y: 260 },
+    { id: "H", type: "dock", neighbors: ["F", "I", "J"], x: 640, y: 110 },
+    { id: "I", type: "elite", danger: "elite", neighbors: ["G", "H", "J"], x: 640, y: 240 },
+    { id: "J", type: "gate", neighbors: ["H", "I"], x: 760, y: 170 }
+  ];
+}
+
+function createSectorByNumber(sectorNumber) {
+  if (sectorNumber === 1) return createSector1();
+  if (sectorNumber === 2) return createSector2();
+  return createSector3();
+}
+
+function getNodeById(nodeId) {
+  return state.mapNodes.find(node => node.id === nodeId) || null;
+}
+
+function getCurrentNode() {
+  return getNodeById(state.currentNodeId);
+}
+
+function formatNodeLabel(node) {
+  if (!node) return "Unknown";
+  if (node.type === "combat") return `Combat (${node.danger || "unknown"})`;
+  if (node.type === "elite") return "Elite";
+  if (node.type === "gate") return state.gateUnlocked ? "Gate (Unlocked)" : "Gate (Locked)";
+  if (node.type === "dock") return "Dock";
+  if (node.type === "planet") return "Planet";
+  return node.type;
+}
+
+function isNodeVisited(nodeId) {
+  return state.visitedNodeIds.includes(nodeId);
+}
+
+function isNodeCleared(nodeId) {
+  return state.clearedNodeIds.includes(nodeId);
+}
+
+function isCurrentNodeCleared() {
+  return state.clearedNodeIds.includes(state.currentNodeId);
+}
+
+function formatNodeStatus(node) {
+  if (!node) return "";
+  const tags = [];
+
+  if (isNodeVisited(node.id)) tags.push("Visited");
+  if (isNodeCleared(node.id)) tags.push("Cleared");
+
+  return tags.length ? ` • ${tags.join(" • ")}` : "";
+}
+
+function markCurrentNodeCleared() {
+  if (!state.currentNodeId) return;
+  if (!state.clearedNodeIds.includes(state.currentNodeId)) {
+    state.clearedNodeIds.push(state.currentNodeId);
+  }
+}
+
+function getSectorProgressText() {
+  const total = state.mapNodes.length;
+  const visited = state.visitedNodeIds.length;
+  const cleared = state.clearedNodeIds.length;
+  return `Visited ${visited} / ${total} • Cleared ${cleared} / ${total}`;
+}
+
+function renderStarMapSvg() {
+  const currentNode = getCurrentNode();
+  if (!currentNode) return "";
+
+  const drawnEdges = new Set();
+  const lineParts = [];
+  const nodeParts = [];
+
+  for (const node of state.mapNodes) {
+    for (const neighborId of node.neighbors) {
+      const key = [node.id, neighborId].sort().join("-");
+      if (drawnEdges.has(key)) continue;
+      drawnEdges.add(key);
+
+      const neighbor = getNodeById(neighborId);
+      if (!neighbor) continue;
+
+      const isAdjacentEdge =
+        node.id === state.currentNodeId ||
+        neighborId === state.currentNodeId;
+
+      const stroke = isAdjacentEdge
+        ? "rgba(140, 200, 255, 0.9)"
+        : "rgba(140, 180, 255, 0.35)";
+
+      const strokeWidth = isAdjacentEdge ? 5 : 3;
+
+      lineParts.push(`
+        <line
+          x1="${node.x}"
+          y1="${node.y}"
+          x2="${neighbor.x}"
+          y2="${neighbor.y}"
+          stroke="${stroke}"
+          stroke-width="${strokeWidth}"
+        />
+      `);
+    }
+  }
+
+  for (const node of state.mapNodes) {
+    const isCurrent = node.id === state.currentNodeId;
+    const isVisited = isNodeVisited(node.id);
+    const isCleared = isNodeCleared(node.id);
+    const isAdjacent = currentNode.neighbors.includes(node.id);
+
+    const projectedFuel = Math.max(0, state.player.fuel - 1);
+    const fuelPreviewText =
+      isAdjacent && !isCurrent
+        ? `<text x="${node.x}" y="${node.y + 56}" text-anchor="middle" font-size="11" font-weight="700" fill="#79bcff">${projectedFuel} fuel</text>`
+        : "";
+
+    let fill = "#1c2c4a";
+    if (node.type === "dock") fill = "#1f6b62";
+    if (node.type === "planet") fill = "#5b4b8a";
+    if (node.type === "elite") fill = "#8a2f2f";
+    if (node.type === "gate") fill = state.gateUnlocked ? "#c08b2f" : "#5f5f5f";
+    if (node.type === "combat") {
+      if (node.danger === "easy") fill = "#3f6ea8";
+      else if (node.danger === "medium") fill = "#2f4d7a";
+      else if (node.danger === "hard") fill = "#24385c";
+      else fill = "#2f4d7a";
+    }
+
+    let stroke = "rgba(255,255,255,0.18)";
+    let strokeWidth = 2;
+    let opacity = 1;
+    let cursor = "default";
+
+    if (isVisited) stroke = "rgba(121,188,255,0.65)";
+    if (isCleared) opacity = 0.55;
+    if (isCurrent) {
+      stroke = "#ffd36a";
+      strokeWidth = 4;
+      cursor = "pointer";
+    } else if (isAdjacent) {
+      stroke = "#79bcff";
+      strokeWidth = 3;
+      cursor = "pointer";
+    }
+
+    nodeParts.push(`
+      <g class="star-node" data-node-id="${node.id}" style="cursor:${cursor}; opacity:${opacity}">
+        <circle
+          cx="${node.x}"
+          cy="${node.y}"
+          r="24"
+          fill="${fill}"
+          stroke="${stroke}"
+          stroke-width="${strokeWidth}"
+        />
+        <text x="${node.x}" y="${node.y + 5}" text-anchor="middle" font-size="14" font-weight="700" fill="#e6f0ff">
+          ${node.id}
+        </text>
+        <text x="${node.x}" y="${node.y + 42}" text-anchor="middle" font-size="11" fill="#9fb3cf">
+          ${formatNodeLabel(node)}
+        </text>
+        ${fuelPreviewText}
+      </g>
+    `);
+  }
+
+  return `
+    <div class="star-map-shell">
+      <svg class="star-map-svg" viewBox="0 0 860 340" width="100%" height="420" role="img" aria-label="Sector star map">
+        ${lineParts.join("")}
+        ${nodeParts.join("")}
+      </svg>
+    </div>
+  `;
+}
 
 const TIER_MULTIPLIER = {
   easy: 1.0,
   medium: 1.2,
-  hard: 1.4
+  hard: 1.4,
+  elite: 1.58
 };
 
 function getAllowedTiersForEncounter(encounterIndex) {
@@ -637,6 +879,7 @@ const els = {
   shipNameText: document.getElementById("shipNameText"),
   shipPassiveText: document.getElementById("shipPassiveText"),
   creditsText: document.getElementById("creditsText"),
+  fuelText: document.getElementById("fuelText"),
 
   drawCount: document.getElementById("drawCount"),
   discardCount: document.getElementById("discardCount"),
@@ -852,17 +1095,590 @@ function getCreditRewardForEncounter(encounterIndex) {
   return BASE_CREDIT_REWARD + CREDIT_REWARD_STEP * encounterIndex;
 }
 
-function continueToNextEncounter() {
+function clearNonCombatPresentation() {
+  state.enemies = [];
+  state.hand = [];
+  state.drawPile = [];
+  state.discardPile = [];
+  state.exhaustPile = [];
+  state.combatEnded = true;
+  state.selectedEnemyUid = null;
+}
+
+function showMapOverlay() {
+  const currentNode = getCurrentNode();
+  if (!currentNode) return;
+
+  clearNonCombatPresentation();
+  state.pendingReward = true;
+
+  els.overlayTitle.textContent = `Star Map — Sector ${state.sectorNumber}`;
+  els.overlayText.textContent = `Current Node: ${currentNode.id} • ${formatNodeLabel(currentNode)}${formatNodeStatus(currentNode)} • Fuel: ${state.player.fuel} • ${getSectorProgressText()}`;
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  els.rewardOptions.innerHTML = `
+  <div class="reward-option">
+    <div class="reward-name">Current Location</div>
+    <div class="reward-meta">Node ${currentNode.id} • ${formatNodeLabel(currentNode)}${formatNodeStatus(currentNode)}</div>
+  </div>
+  <div class="reward-option">
+    <div class="reward-name">Sector Map</div>
+    <div class="reward-meta">Current node is gold. Adjacent nodes are blue. Cleared nodes are dimmed. Adjacent nodes show fuel after travel. Darker combat nodes indicate higher danger.</div>
+    ${renderStarMapSvg()}
+  </div>
+`;
+
+  const engageButton = document.createElement("button");
+  engageButton.className = "reward-option";
+  engageButton.innerHTML = `
+  <div class="reward-name">Engage Current Node</div>
+  <div class="reward-meta">${formatNodeLabel(currentNode)}${formatNodeStatus(currentNode)}</div>
+`;
+  engageButton.addEventListener("click", () => {
+    resolveCurrentNode();
+  });
+  els.rewardOptions.appendChild(engageButton);
+
+  const nodeEls = els.rewardOptions.querySelectorAll(".star-node");
+  nodeEls.forEach(nodeEl => {
+    const nodeId = nodeEl.getAttribute("data-node-id");
+    if (!nodeId) return;
+
+    if (nodeId === state.currentNodeId) {
+      nodeEl.addEventListener("click", () => resolveCurrentNode());
+      return;
+    }
+
+    const currentNode = getCurrentNode();
+    if (currentNode && currentNode.neighbors.includes(nodeId)) {
+      nodeEl.addEventListener("click", () => travelToNode(nodeId));
+    }
+  });
+
+  render();
+}
+
+function travelToNode(targetNodeId) {
+  const currentNode = getCurrentNode();
+  if (!currentNode) return;
+
+  if (!currentNode.neighbors.includes(targetNodeId)) return;
+
+  if (state.player.fuel < 1) {
+    log("Out of fuel. Drift Mode will be implemented later.", "enemy");
+    return;
+  }
+
+  state.player.fuel -= 1;
+  state.currentNodeId = targetNodeId;
+
+  if (!state.visitedNodeIds.includes(targetNodeId)) {
+    state.visitedNodeIds.push(targetNodeId);
+  }
+
+  log(`Traveled to node ${targetNodeId}. Fuel: ${state.player.fuel}.`, "system");
+  resolveCurrentNode();
+}
+
+function resolveCurrentNode() {
+  const node = getCurrentNode();
+  if (!node) return;
+
+  if (node.type === "combat" || node.type === "elite") {
+    if (isCurrentNodeCleared()) {
+      log(`Node ${node.id} already cleared.`, "system");
+      returnToMap();
+      return;
+    }
+
+    state.currentScreen = "combat";
+    state.pendingEliteContract = node.type === "elite";
+    state.pendingPlanetAlienAmbush = false;
+    state.pendingReward = false;
+    hideOverlay();
+    beginEncounter();
+    return;
+  }
+
+  if (node.type === "dock") {
+    if (isCurrentNodeCleared()) {
+      log(`Dock node ${node.id} already used.`, "system");
+      returnToMap();
+      return;
+    }
+
+    state.currentScreen = "combat";
+    hideOverlay();
+    showDockOverlay();
+    return;
+  }
+
+  if (node.type === "planet") {
+    if (isCurrentNodeCleared()) {
+      log(`Planet node ${node.id} already resolved.`, "system");
+      returnToMap();
+      return;
+    }
+
+    state.currentScreen = "combat";
+    hideOverlay();
+    showPlanetOverlay();
+    return;
+  }
+
+  if (node.type === "gate") {
+    state.currentScreen = "combat";
+    hideOverlay();
+    showGateOverlay();
+    return;
+  }
+}
+
+function returnToMap() {
+  state.currentScreen = "map";
+  state.pendingReward = false;
+  state.pendingExtraction = false;
+  hideOverlay();
+  render();
+}
+
+function advanceAfterCombatRewards() {
   state.pendingReward = false;
   state.pendingExtraction = false;
   state.rewardChoices = [];
-  state.encounterIndex += 1;
-  beginEncounter();
+  returnToMap();
+}
+
+function finishNodeAfterNonCombat() {
+  state.pendingReward = false;
+  markCurrentNodeCleared();
+  returnToMap();
+}
+
+function showDockOverlay() {
+  clearNonCombatPresentation();
+  state.pendingReward = true;
+
+  els.overlayTitle.textContent = "Dock";
+  els.overlayText.textContent = "Station services.";
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  const refuelBtn = document.createElement("button");
+  refuelBtn.className = "reward-option";
+  refuelBtn.innerHTML = `
+    <div class="reward-name">Refuel</div>
+    <div class="reward-meta">Restore fuel to full (free)</div>
+  `;
+  refuelBtn.addEventListener("click", () => {
+    const restored = state.player.maxFuel - state.player.fuel;
+    state.player.fuel = state.player.maxFuel;
+    log(`Dock: refueled ${restored} fuel. Total fuel: ${state.player.fuel}.`, "system");
+    returnToMap();
+  });
+
+  const repairBtn = document.createElement("button");
+  repairBtn.className = "reward-option";
+  repairBtn.disabled = state.runCredits < 40;
+  repairBtn.innerHTML = `
+    <div class="reward-name">Repair hull</div>
+    <div class="reward-meta">Restore 10 hull — 40 credits</div>
+  `;
+  repairBtn.addEventListener("click", () => {
+    if (state.runCredits < 40) return;
+    state.runCredits -= 40;
+    repairPlayerHull(10, "Dock");
+    finishNodeAfterNonCombat();
+  });
+
+  const leaveBtn = document.createElement("button");
+  leaveBtn.className = "reward-option";
+  leaveBtn.innerHTML = `
+    <div class="reward-name">Leave</div>
+    <div class="reward-meta">Return to the map without consuming this dock.</div>
+  `;
+  leaveBtn.addEventListener("click", () => returnToMap());
+
+  els.rewardOptions.appendChild(refuelBtn);
+  els.rewardOptions.appendChild(repairBtn);
+  els.rewardOptions.appendChild(leaveBtn);
+  render();
+}
+
+function startNextSector() {
+  state.sectorNumber += 1;
+  state.gateUnlocked = false;
+  state.mapNodes = createSectorByNumber(state.sectorNumber);
+  state.currentNodeId = "A";
+  state.visitedNodeIds = ["A"];
+  state.clearedNodeIds = [];
+  state.player.fuel = state.player.maxFuel;
+  state.encounterIndex = 0;
+  state.encounterTier = "easy";
+  state.pendingPlanetAlienAmbush = false;
+  state.planetAlienAmbushCombat = false;
+  state.pendingEliteContract = false;
+  state.eliteContractCombat = false;
+  state.pendingReward = false;
+  state.pendingExtraction = false;
+  state.rewardChoices = [];
+  state.combatEnded = false;
+  state.ambushEncounter = false;
+  state.victoryFuelGranted = false;
+  state.inBossCombat = false;
+  state.pendingBoss = false;
+  log(`Jumped to Sector ${state.sectorNumber}. Fuel restored to ${state.player.fuel}.`, "system");
+  returnToMap();
+}
+
+function showPlanetOverlay() {
+  const node = getCurrentNode();
+  if (!node) return;
+
+  clearNonCombatPresentation();
+  state.pendingReward = true;
+
+  els.overlayTitle.textContent = "Planet";
+  els.overlayText.textContent = `Node ${node.id} • Choose whether to explore now or leave it for later.`;
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  const exploreBtn = document.createElement("button");
+  exploreBtn.className = "reward-option";
+  exploreBtn.innerHTML = `
+    <div class="reward-name">Explore Planet</div>
+    <div class="reward-meta">Resolve the planet event and consume this node.</div>
+  `;
+  exploreBtn.addEventListener("click", () => {
+    hideOverlay();
+    resolvePlanetEvent();
+  });
+
+  const leaveBtn = document.createElement("button");
+  leaveBtn.className = "reward-option";
+  leaveBtn.innerHTML = `
+    <div class="reward-name">Leave for Now</div>
+    <div class="reward-meta">Return to the map without consuming this node.</div>
+  `;
+  leaveBtn.addEventListener("click", () => {
+    returnToMap();
+  });
+
+  els.rewardOptions.appendChild(exploreBtn);
+  els.rewardOptions.appendChild(leaveBtn);
+
+  render();
+}
+
+function getSectorBossName(sectorNumber) {
+  if (sectorNumber === 1) return "Patrol Commander";
+  if (sectorNumber === 2) return "Contract Warden";
+  return "Blacksite Hunter";
+}
+
+function getSectorBossDescription(sectorNumber) {
+  if (sectorNumber === 1) return "Heavy striker with escort support.";
+  if (sectorNumber === 2) return "Aggressive dual-ship assault.";
+  return "Fortified flagship with support cover.";
+}
+
+function getSectorUpgradeFlavor(sectorNumber) {
+  if (sectorNumber === 1) {
+    return {
+      title: "Patrol Commander Salvage",
+      text: `You strip the wreckage of ${getSectorBossName(sectorNumber)} for usable systems. Choose one upgrade before entering Sector ${sectorNumber + 1}.`
+    };
+  }
+
+  if (sectorNumber === 2) {
+    return {
+      title: "Contract Warden Retrofit",
+      text: `The remains of ${getSectorBossName(sectorNumber)} yield hardened components and tactical hardware. Choose one upgrade before entering Sector ${sectorNumber + 1}.`
+    };
+  }
+
+  return {
+    title: "Blacksite Hunter Recovery",
+    text: `Recovered blacksite components offer dangerous but valuable enhancements. Choose one upgrade before entering Sector ${sectorNumber + 1}.`
+  };
+}
+
+function buildSectorBossEncounter(sectorNumber) {
+  if (sectorNumber === 1) {
+    const lead = getEnemyTypeById("burst-bounty") || ENEMY_TYPES[Math.min(3, ENEMY_TYPES.length - 1)];
+    const escort = getEnemyTypeById("support-escort") || ENEMY_TYPES[0];
+    return [
+      buildEnemyFromTemplate(lead, "bounty", "hard"),
+      buildEnemyFromTemplate(escort, "escort", "hard")
+    ];
+  }
+
+  if (sectorNumber === 2) {
+    const lead = ENEMY_TYPES[Math.min(4, ENEMY_TYPES.length - 1)];
+    const wing = getEnemyTypeById("burst-bounty") || lead;
+    return [
+      buildEnemyFromTemplate(lead, "bounty", "hard"),
+      buildEnemyFromTemplate(wing, "bounty", "hard")
+    ];
+  }
+
+  const tank = getEnemyTypeById("bulwark") || ENEMY_TYPES[Math.min(3, ENEMY_TYPES.length - 1)];
+  const escort = getEnemyTypeById("support-escort") || ENEMY_TYPES[0];
+  return [
+    buildEnemyFromTemplate(tank, "bounty", "elite"),
+    buildEnemyFromTemplate(escort, "escort", "hard")
+  ];
+}
+
+function showBossIntroOverlay() {
+  const bossName = getSectorBossName(state.sectorNumber);
+  const bossDescription = getSectorBossDescription(state.sectorNumber);
+
+  clearNonCombatPresentation();
+  state.pendingReward = true;
+
+  els.overlayTitle.textContent = "Boss Contact";
+  els.overlayText.textContent = `${bossName} detected. ${bossDescription}`;
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  const engageBtn = document.createElement("button");
+  engageBtn.className = "reward-option";
+  engageBtn.innerHTML = `
+    <div class="reward-name">Engage Boss</div>
+    <div class="reward-meta">${bossDescription}</div>
+  `;
+  engageBtn.addEventListener("click", () => {
+    state.pendingBoss = true;
+    state.currentScreen = "combat";
+    hideOverlay();
+    beginEncounter();
+  });
+
+  const leaveBtn = document.createElement("button");
+  leaveBtn.className = "reward-option";
+  leaveBtn.innerHTML = `
+    <div class="reward-name">Stand Down</div>
+    <div class="reward-meta">Return to the map and prepare before the boss fight.</div>
+  `;
+  leaveBtn.addEventListener("click", () => {
+    returnToMap();
+  });
+
+  els.rewardOptions.appendChild(engageBtn);
+  els.rewardOptions.appendChild(leaveBtn);
+
+  render();
+}
+
+function showGateOverlay() {
+  const node = getCurrentNode();
+  if (!node) return;
+
+  clearNonCombatPresentation();
+  state.pendingReward = true;
+
+  els.overlayTitle.textContent = "Jump Gate";
+  els.overlayText.textContent = state.gateUnlocked
+    ? `Sector gate is online. Advance to Sector ${state.sectorNumber + 1}?`
+    : "The gate is locked. Clear the elite node to unlock it.";
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  if (state.gateUnlocked) {
+    const jumpBtn = document.createElement("button");
+    jumpBtn.className = "reward-option";
+    jumpBtn.innerHTML = `
+      <div class="reward-name">Face Sector Boss</div>
+      <div class="reward-meta">Confront ${getSectorBossName(state.sectorNumber)} to unlock the next sector upgrade.</div>
+    `;
+    jumpBtn.addEventListener("click", () => {
+      showBossIntroOverlay();
+    });
+    els.rewardOptions.appendChild(jumpBtn);
+  }
+
+  const leaveBtn = document.createElement("button");
+  leaveBtn.className = "reward-option";
+  leaveBtn.innerHTML = `
+    <div class="reward-name">Leave</div>
+    <div class="reward-meta">Return to the map.</div>
+  `;
+  leaveBtn.addEventListener("click", () => {
+    returnToMap();
+  });
+  els.rewardOptions.appendChild(leaveBtn);
+
+  render();
+}
+
+function showShipUpgradeOverlay() {
+  state.pendingReward = true;
+  const flavor = getSectorUpgradeFlavor(state.sectorNumber);
+
+  els.overlayTitle.textContent = flavor.title;
+  els.overlayText.textContent = flavor.text;
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  const energyBtn = document.createElement("button");
+  energyBtn.className = "reward-option";
+  energyBtn.innerHTML = `
+    <div class="reward-name">+1 Max Energy</div>
+    <div class="reward-meta">Increase your base reactor output by 1.</div>
+  `;
+  energyBtn.addEventListener("click", () => {
+    state.player.baseEnergy += 1;
+    state.player.energy = state.player.baseEnergy + state.player.reactorBonus;
+    hideOverlay();
+    startNextSector();
+  });
+
+  const hullBtn = document.createElement("button");
+  hullBtn.className = "reward-option";
+  hullBtn.innerHTML = `
+    <div class="reward-name">+10 Max Hull</div>
+    <div class="reward-meta">Increase hull capacity and current hull by 10.</div>
+  `;
+  hullBtn.addEventListener("click", () => {
+    state.player.maxHull += 10;
+    state.player.hull += 10;
+    hideOverlay();
+    startNextSector();
+  });
+
+  const fuelBtn = document.createElement("button");
+  fuelBtn.className = "reward-option";
+  fuelBtn.innerHTML = `
+    <div class="reward-name">+1 Max Fuel</div>
+    <div class="reward-meta">Increase fuel tank capacity by 1.</div>
+  `;
+  fuelBtn.addEventListener("click", () => {
+    state.player.maxFuel += 1;
+    state.player.fuel = Math.min(state.player.fuel + 1, state.player.maxFuel);
+    hideOverlay();
+    startNextSector();
+  });
+
+  els.rewardOptions.appendChild(energyBtn);
+  els.rewardOptions.appendChild(hullBtn);
+  els.rewardOptions.appendChild(fuelBtn);
+
+  render();
+}
+
+function showPlanetResolvedOverlay(title, text) {
+  state.pendingReward = true;
+  els.overlayTitle.textContent = title;
+  els.overlayText.textContent = text;
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  const btn = document.createElement("button");
+  btn.className = "reward-option";
+  btn.innerHTML = `
+    <div class="reward-name">Continue</div>
+    <div class="reward-meta">Return to the map.</div>
+  `;
+  btn.addEventListener("click", () => finishNodeAfterNonCombat());
+  els.rewardOptions.appendChild(btn);
+  render();
+}
+
+function resolvePlanetEvent() {
+  const kinds = ["alien", "cache", "fuel", "tech", "radiation"];
+  const kind = pickRandom(kinds);
+
+  if (kind === "alien") {
+    state.encounterIndex += 1;
+    state.pendingPlanetAlienAmbush = true;
+    beginEncounter();
+    return;
+  }
+
+  clearNonCombatPresentation();
+  state.pendingReward = true;
+
+  if (kind === "cache") {
+    state.runCredits += 30;
+    log(`Planet: derelict cache — +30 credits. Total: ${state.runCredits}.`, "system");
+    showPlanetResolvedOverlay("Planet", "Derelict cache: +30 credits.");
+    return;
+  }
+
+  if (kind === "fuel") {
+    state.player.fuel = Math.max(0, state.player.fuel - 1);
+    log(`Planet: fuel leak — lost 1 fuel. Fuel: ${state.player.fuel}.`, "system");
+    showPlanetResolvedOverlay("Planet", "Fuel leak: −1 fuel.");
+    return;
+  }
+
+  if (kind === "tech") {
+    const pool = shuffle(REWARD_POOL_IDS.slice());
+    const cardId = pool[0];
+    state.runDeck.push(cardId);
+    const card = ALL_CARDS.find(c => c.id === cardId);
+    const name = card ? card.name : cardId;
+    log(`Planet: tech find — ${name} added to your deck.`, "system");
+    showPlanetResolvedOverlay("Planet", `Tech find: ${name} added to your deck.`);
+    return;
+  }
+
+  state.player.hull = Math.max(0, state.player.hull - 4);
+  log(`Planet: radiation storm — took 4 hull damage. Hull: ${state.player.hull}.`, "enemy");
+  if (state.player.hull <= 0) {
+    showOverlay(
+      "Run Failed",
+      "Radiation exposure destroyed your ship.",
+      "Restart Run",
+      () => startRun()
+    );
+    return;
+  }
+  showPlanetResolvedOverlay("Planet", `Radiation storm: −4 hull (${state.player.hull} / ${state.player.maxHull}).`);
 }
 
 function chooseCreditsReward() {
   awardEncounterCredits();
-  continueToNextEncounter();
+  advanceAfterCombatRewards();
+}
+
+function showAmbushCreditsOnlyOverlay() {
+  state.pendingReward = true;
+
+  const creditReward = getCreditRewardForEncounter(state.encounterIndex);
+
+  els.overlayTitle.textContent = "Encounter Won";
+  els.overlayText.textContent = `Low fuel — ambush. No card salvage. +${creditReward} credits.`;
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  const creditsBtn = document.createElement("button");
+  creditsBtn.className = "reward-option";
+  creditsBtn.innerHTML = `
+    <div class="reward-name">Take Credits</div>
+    <div class="reward-meta">Gain ${creditReward} credits and continue.</div>
+  `;
+  creditsBtn.addEventListener("click", chooseCreditsReward);
+
+  els.rewardOptions.appendChild(creditsBtn);
 }
 
 function chooseCardReward() {
@@ -875,7 +1691,7 @@ function chooseReward(cardId) {
   if (card) {
     log(`Reward chosen: ${card.name} added to your run deck.`, "system");
   }
-  continueToNextEncounter();
+  advanceAfterCombatRewards();
 }
 
 function showRewardOverlay() {
@@ -1017,6 +1833,43 @@ const ENCOUNTER_TEMPLATES = [
   }
 ];
 
+const AMBUSH_TEMPLATE = {
+  id: "ambush",
+  tier: "hard",
+  build(encounterIndex, tier) {
+    const bounty = ENEMY_TYPES[Math.min(encounterIndex + 1, ENEMY_TYPES.length - 1)];
+    return [buildEnemyFromTemplate(bounty, "bounty", tier)];
+  }
+};
+
+const PLANET_ALIEN_AMBUSH_TEMPLATE = {
+  id: "planet-alien",
+  tier: "hard",
+  build(encounterIndex, tier) {
+    const bounty = ENEMY_TYPES[Math.min(encounterIndex + 2, ENEMY_TYPES.length - 1)];
+    return [buildEnemyFromTemplate(bounty, "bounty", tier)];
+  }
+};
+
+const ELITE_CONTRACT_TEMPLATES = [
+  {
+    id: "elite-vanguard",
+    build(encounterIndex, tier) {
+      const bounty = ENEMY_TYPES[Math.min(encounterIndex + 3, ENEMY_TYPES.length - 1)];
+      const escort = getEnemyTypeById("support-escort") || ENEMY_TYPES[0];
+      return [buildEnemyFromTemplate(bounty, "bounty", tier), buildEnemyFromTemplate(escort, "escort", tier)];
+    }
+  },
+  {
+    id: "elite-breach",
+    build(encounterIndex, tier) {
+      const lead = ENEMY_TYPES[Math.min(encounterIndex + 3, ENEMY_TYPES.length - 1)];
+      const wing = ENEMY_TYPES[Math.min(encounterIndex + 2, ENEMY_TYPES.length - 1)];
+      return [buildEnemyFromTemplate(lead, "bounty", tier), buildEnemyFromTemplate(wing, "bounty", tier)];
+    }
+  }
+];
+
 function getEncounterTemplatesForTier(tier) {
   if (tier === "easy") return ENCOUNTER_TEMPLATES.filter(t => t.id === "duel");
   if (tier === "medium") return ENCOUNTER_TEMPLATES.filter(t => t.id === "duel" || t.id === "protected" || t.id === "double");
@@ -1073,12 +1926,44 @@ function showExtractionOverlay() {
 }
 
 function beginEncounter() {
-  const allowed = getAllowedTiersForEncounter(state.encounterIndex);
-  const tier = pickRandom(allowed);
-  state.encounterTier = tier;
+  state.ambushEncounter = false;
+  state.victoryFuelGranted = false;
+  state.planetAlienAmbushCombat = false;
+  state.eliteContractCombat = false;
 
-  const template = getCurrentEncounterTemplate(tier);
-  state.enemies = template.build(state.encounterIndex, tier).slice(0, 2);
+  let tier;
+  if (state.pendingBoss) {
+    state.inBossCombat = true;
+    state.pendingBoss = false;
+    tier = "boss";
+    state.encounterTier = tier;
+    state.enemies = buildSectorBossEncounter(state.sectorNumber).slice(0, 2);
+  } else if (state.pendingPlanetAlienAmbush) {
+    state.pendingPlanetAlienAmbush = false;
+    state.planetAlienAmbushCombat = true;
+    tier = "medium";
+    state.encounterTier = tier;
+    state.enemies = PLANET_ALIEN_AMBUSH_TEMPLATE.build(state.encounterIndex, tier);
+  } else if (state.pendingEliteContract) {
+    state.pendingEliteContract = false;
+    state.eliteContractCombat = true;
+    tier = "elite";
+    state.encounterTier = tier;
+    const template = pickRandom(ELITE_CONTRACT_TEMPLATES);
+    state.enemies = template.build(state.encounterIndex, tier).slice(0, 2);
+  } else if (state.encounterIndex > 0) {
+    const allowed = getAllowedTiersForEncounter(state.encounterIndex);
+    tier = pickRandom(allowed);
+    state.encounterTier = tier;
+    const template = getCurrentEncounterTemplate(tier);
+    state.enemies = template.build(state.encounterIndex, tier).slice(0, 2);
+  } else {
+    const allowed = getAllowedTiersForEncounter(state.encounterIndex);
+    tier = pickRandom(allowed);
+    state.encounterTier = tier;
+    const template = getCurrentEncounterTemplate(tier);
+    state.enemies = template.build(state.encounterIndex, tier).slice(0, 2);
+  }
   state.selectedEnemyUid = getDefaultTargetUid();
   state.drawPile = shuffle(state.runDeck.map(id => makeCard(id)));
   state.discardPile = [];
@@ -1098,7 +1983,17 @@ function beginEncounter() {
 
   hideOverlay();
 
-  log(`Encounter ${state.encounterIndex + 1} begins (${tier.toUpperCase()}).`, "enemy");
+  if (state.inBossCombat) {
+    log(
+      `Encounter ${state.encounterIndex + 1} begins (BOSS • ${getSectorBossName(state.sectorNumber)}).`,
+      "enemy"
+    );
+  } else {
+    log(
+      `Encounter ${state.encounterIndex + 1} begins (${tier.toUpperCase()}${state.planetAlienAmbushCombat ? " • PLANET AMBUSH" : state.eliteContractCombat ? " • ELITE CONTRACT" : state.ambushEncounter ? " • AMBUSH" : ""}).`,
+      "enemy"
+    );
+  }
 
   drawCards(5);
   updateEnemyIntent();
@@ -1114,7 +2009,9 @@ function startRun() {
     energy: 3,
     weaponBonus: 0,
     shieldBonus: 0,
-    reactorBonus: 0
+    reactorBonus: 0,
+    maxFuel: 5,
+    fuel: 5
   };
 
   state.runDeck = makeRunDeck();
@@ -1125,8 +2022,24 @@ function startRun() {
   state.encounterIndex = 0;
   state.rewardChoices = [];
   state.pendingReward = false;
+  state.pendingPlanetAlienAmbush = false;
+  state.planetAlienAmbushCombat = false;
+  state.pendingEliteContract = false;
+  state.eliteContractCombat = false;
+  state.gateUnlocked = false;
+  state.inBossCombat = false;
+  state.pendingBoss = false;
+  state.sectorNumber = 1;
   els.log.innerHTML = "";
-  beginEncounter();
+
+  state.mapNodes = createSectorByNumber(state.sectorNumber);
+  state.currentNodeId = "A";
+  state.visitedNodeIds = ["A"];
+  state.clearedNodeIds = [];
+  state.currentScreen = "map";
+
+  hideOverlay();
+  render();
 }
 
 function gainPlayerBlock(amount, sourceName) {
@@ -1374,12 +2287,47 @@ function redrawHand() {
 
 function handleCombatEnd() {
   if (state.player.hull <= 0) {
+    state.planetAlienAmbushCombat = false;
+    state.eliteContractCombat = false;
+    state.inBossCombat = false;
     showOverlay(
       "Run Failed",
       "Your ship was destroyed. Restart and try again.",
       "Restart Run",
       () => startRun()
     );
+    return;
+  }
+
+  const currentNode = getCurrentNode();
+  if (
+    state.combatEnded &&
+    currentNode &&
+    (currentNode.type === "combat" || currentNode.type === "elite") &&
+    !state.clearedNodeIds.includes(currentNode.id)
+  ) {
+    state.clearedNodeIds.push(currentNode.id);
+  }
+
+  if (state.combatEnded && currentNode && currentNode.type === "elite") {
+    state.gateUnlocked = true;
+  }
+
+  if (state.planetAlienAmbushCombat) {
+    state.runCredits += 20;
+    log(`Planet ambush bonus: +20 credits. Total credits: ${state.runCredits}.`, "system");
+    state.planetAlienAmbushCombat = false;
+  }
+
+  if (state.eliteContractCombat) {
+    state.runCredits += ELITE_CLEAR_BONUS;
+    log(`Elite contract bonus: +${ELITE_CLEAR_BONUS} credits. Total credits: ${state.runCredits}.`, "system");
+    state.eliteContractCombat = false;
+  }
+
+  if (state.inBossCombat) {
+    state.inBossCombat = false;
+    showShipUpgradeOverlay();
     return;
   }
 
@@ -1390,6 +2338,11 @@ function handleCombatEnd() {
       "Restart Run",
       () => startRun()
     );
+    return;
+  }
+
+  if (state.ambushEncounter) {
+    showAmbushCreditsOnlyOverlay();
     return;
   }
 
@@ -1441,7 +2394,20 @@ function renderHand() {
   });
 }
 
+let mapOverlayInProgress = false;
+
 function render() {
+  if (state.currentScreen === "map") {
+    if (!mapOverlayInProgress) {
+      mapOverlayInProgress = true;
+      try {
+        showMapOverlay();
+      } finally {
+        mapOverlayInProgress = false;
+      }
+    }
+    return;
+  }
   els.playerHullText.textContent = `${state.player.hull} / ${state.player.maxHull}`;
   els.playerHullBar.style.width = `${(state.player.hull / state.player.maxHull) * 100}%`;
   els.playerBlockText.textContent = state.player.block;
@@ -1452,6 +2418,7 @@ function render() {
   els.shipNameText.textContent = SHIP_NAME;
   els.shipPassiveText.textContent = SHIP_PASSIVE_TEXT;
   els.creditsText.textContent = state.runCredits;
+  if (els.fuelText) els.fuelText.textContent = state.player.fuel;
 
   els.drawCount.textContent = state.drawPile.length;
   els.discardCount.textContent = state.discardPile.length;
