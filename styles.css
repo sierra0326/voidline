@@ -23,6 +23,34 @@ body {
   margin-bottom: 24px;
 }
 
+.combo-banner {
+  position: sticky;
+  top: 12px;
+  z-index: 20;
+  margin: 0 auto 16px;
+  width: fit-content;
+  max-width: 90%;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #04111d;
+  background: linear-gradient(90deg, #ffd36a, #ff8a5b);
+  box-shadow: 0 8px 28px rgba(255, 160, 80, 0.28);
+  transform: translateY(0);
+  opacity: 1;
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.combo-banner.hidden {
+  display: none;
+}
+
+.combo-banner.fade-out {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
 h1, h2, h3 {
   margin: 0;
 }

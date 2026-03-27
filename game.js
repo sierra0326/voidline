@@ -32,6 +32,7 @@ const state = {
   clearedNodeIds: [],
   currentScreen: "combat",
   sectorNumber: 1,
+  notoriety: 0,
   gateUnlocked: false,
   inBossCombat: false,
   pendingBoss: false
@@ -59,10 +60,11 @@ function createSector1() {
     { id: "B", type: "dock", neighbors: ["A", "D", "E"], x: 220, y: 110 },
     { id: "C", type: "planet", neighbors: ["A", "F"], x: 220, y: 250 },
     { id: "D", type: "combat", danger: "medium", neighbors: ["B", "G"], x: 360, y: 70 },
-    { id: "E", type: "combat", danger: "medium", neighbors: ["B", "G", "H"], x: 360, y: 160 },
+    { id: "E", type: "combat", danger: "medium", neighbors: ["B", "G", "H", "K"], x: 360, y: 160 },
     { id: "F", type: "combat", danger: "medium", neighbors: ["C", "H"], x: 360, y: 270 },
     { id: "G", type: "dock", neighbors: ["D", "E", "I"], x: 500, y: 110 },
-    { id: "H", type: "planet", neighbors: ["E", "F", "J"], x: 500, y: 230 },
+    { id: "H", type: "planet", neighbors: ["E", "F", "J", "K"], x: 500, y: 230 },
+    { id: "K", type: "shop", neighbors: ["E", "H"], x: 430, y: 320 },
     { id: "I", type: "elite", danger: "elite", neighbors: ["G", "J"], x: 640, y: 90 },
     { id: "J", type: "gate", neighbors: ["H", "I"], x: 640, y: 220 }
   ];
@@ -74,10 +76,11 @@ function createSector2() {
     { id: "B", type: "combat", danger: "medium", neighbors: ["A", "D", "E"], x: 220, y: 110 },
     { id: "C", type: "dock", neighbors: ["A", "F"], x: 220, y: 250 },
     { id: "D", type: "planet", neighbors: ["B", "G"], x: 360, y: 70 },
-    { id: "E", type: "combat", danger: "medium", neighbors: ["B", "G", "H"], x: 360, y: 160 },
+    { id: "E", type: "combat", danger: "medium", neighbors: ["B", "G", "H", "K"], x: 360, y: 160 },
     { id: "F", type: "combat", danger: "medium", neighbors: ["C", "H"], x: 360, y: 270 },
     { id: "G", type: "dock", neighbors: ["D", "E", "I"], x: 500, y: 110 },
-    { id: "H", type: "planet", neighbors: ["E", "F", "J"], x: 500, y: 230 },
+    { id: "H", type: "planet", neighbors: ["E", "F", "J", "K"], x: 500, y: 230 },
+    { id: "K", type: "shop", neighbors: ["E", "H"], x: 430, y: 320 },
     { id: "I", type: "elite", danger: "elite", neighbors: ["G", "J"], x: 640, y: 90 },
     { id: "J", type: "gate", neighbors: ["H", "I"], x: 640, y: 220 }
   ];
@@ -89,10 +92,11 @@ function createSector3() {
     { id: "B", type: "combat", danger: "medium", neighbors: ["A", "D"], x: 220, y: 110 },
     { id: "C", type: "planet", neighbors: ["A", "E"], x: 220, y: 250 },
     { id: "D", type: "dock", neighbors: ["B", "F"], x: 360, y: 80 },
-    { id: "E", type: "combat", danger: "medium", neighbors: ["C", "F", "G"], x: 360, y: 210 },
+    { id: "E", type: "combat", danger: "medium", neighbors: ["C", "F", "G", "K"], x: 360, y: 210 },
     { id: "F", type: "combat", danger: "medium", neighbors: ["D", "E", "H"], x: 500, y: 110 },
     { id: "G", type: "planet", neighbors: ["E", "I"], x: 500, y: 260 },
-    { id: "H", type: "dock", neighbors: ["F", "I", "J"], x: 640, y: 110 },
+    { id: "H", type: "dock", neighbors: ["F", "I", "J", "K"], x: 640, y: 110 },
+    { id: "K", type: "shop", neighbors: ["E", "H"], x: 570, y: 320 },
     { id: "I", type: "elite", danger: "elite", neighbors: ["G", "H", "J"], x: 640, y: 240 },
     { id: "J", type: "gate", neighbors: ["H", "I"], x: 760, y: 170 }
   ];
@@ -119,6 +123,7 @@ function formatNodeLabel(node) {
   if (node.type === "gate") return state.gateUnlocked ? "Gate (Unlocked)" : "Gate (Locked)";
   if (node.type === "dock") return "Dock";
   if (node.type === "planet") return "Planet";
+  if (node.type === "shop") return "Shop";
   return node.type;
 }
 
@@ -363,6 +368,18 @@ const SYSTEM_CARDS = [
     }
   },
   {
+    id: "debug-delete",
+    name: "Debug Delete",
+    type: "system",
+    cost: 0,
+    description: "TEST ONLY: Destroy the selected enemy.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      dealDamageToEnemy(enemy.hull + enemy.block, "Debug Delete");
+    }
+  },
+  {
     id: "finishing-shot",
     name: "Finishing Shot",
     type: "system",
@@ -381,11 +398,19 @@ const SYSTEM_CARDS = [
     name: "Target Lock",
     type: "system",
     cost: 1,
-    description: "Deal 3 damage. Your next attack this turn deals +3 damage.",
+    description: "Convert all Mark into Beam.",
     effect() {
-      dealAttackDamageToEnemy(3, "Target Lock");
-      state.nextAttackBonus += 3;
-      log("Target Lock primes your next attack for +3 damage this turn.", "system");
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+
+      const mark = enemy.markStacks || 0;
+      if (mark <= 0) return;
+
+      enemy.markStacks = 0;
+      enemy.beamCharge = (enemy.beamCharge || 0) + mark;
+
+      log(`Target Lock converts ${mark} Mark into Beam.`, "system");
+      showComboBanner("🎯→⚡ CHAIN ONLINE");
     }
   },
   {
@@ -518,13 +543,14 @@ const SYSTEM_CARDS = [
     name: "Hunter's Tag",
     type: "system",
     cost: 1,
-    description: "Deal 2 damage. Apply Mark.",
+    description: "Deal 2 damage. Apply 2 Mark.",
     effect() {
       dealAttackDamageToEnemy(2, "Hunter's Tag");
       const enemy = getSelectedEnemy();
       if (!enemy) return;
-      enemy.isMarked = true;
-      log("Mark applied — enemy is Marked.", "system");
+      const x = 2;
+      enemy.markStacks = (enemy.markStacks || 0) + x;
+      log(`Mark applied — +${x} Mark.`, "system");
     }
   },
   {
@@ -532,13 +558,14 @@ const SYSTEM_CARDS = [
     name: "Paint the Target",
     type: "system",
     cost: 0,
-    description: "Apply Mark. Draw 1 card.",
+    description: "Apply 1 Mark. Draw 1 card.",
     effect() {
       const enemy = getSelectedEnemy();
       if (!enemy) return;
-      enemy.isMarked = true;
+      const x = 1;
+      enemy.markStacks = (enemy.markStacks || 0) + x;
       drawCards(1);
-      log("Mark applied — enemy is Marked.", "system");
+      log(`Mark applied — +${x} Mark.`, "system");
     }
   },
   {
@@ -546,13 +573,14 @@ const SYSTEM_CARDS = [
     name: "Pursuit Sweep",
     type: "system",
     cost: 1,
-    description: "Gain 3 block. Apply Mark.",
+    description: "Gain 3 block. Apply 1 Mark.",
     effect() {
       gainPlayerBlock(3 + state.player.shieldBonus, "Pursuit Sweep");
       const enemy = getSelectedEnemy();
       if (!enemy) return;
-      enemy.isMarked = true;
-      log("Mark applied — enemy is Marked.", "system");
+      const x = 1;
+      enemy.markStacks = (enemy.markStacks || 0) + x;
+      log(`Mark applied — +${x} Mark.`, "system");
     }
   },
   {
@@ -560,12 +588,13 @@ const SYSTEM_CARDS = [
     name: "Claim Shot",
     type: "system",
     cost: 1,
-    description: "Deal 4 damage. If Marked, deal 8 instead.",
+    description: "Deal 4 damage. If target has Mark, deal 8 instead.",
     effect() {
       const enemy = getSelectedEnemy();
       if (!enemy) return;
-      const baseDamage = enemy.isMarked ? 8 : 4;
-      dealAttackDamageToEnemy(baseDamage, "Claim Shot");
+      const mark = enemy.markStacks || 0;
+      const dmg = 4 + mark * 3;
+      dealAttackDamageToEnemy(dmg, "Claim Shot");
     }
   },
   {
@@ -573,15 +602,15 @@ const SYSTEM_CARDS = [
     name: "Bounty Collection",
     type: "system",
     cost: 2,
-    description: "Deal 7 damage. If Marked, gain 1 energy.",
+    description: "Deal 7 damage. If target has Mark, gain 1 energy.",
     effect() {
       const enemy = getSelectedEnemy();
       if (!enemy) return;
-      dealAttackDamageToEnemy(7, "Bounty Collection");
-      if (enemy.isMarked) {
-        state.player.energy += 1;
-        log("Bounty Collection grants 1 energy on a Marked target.", "system");
-      }
+      const mark = enemy.markStacks || 0;
+      const credits = 3 + mark * 2;
+      state.runCredits += credits;
+      log(`Bounty Collection pays out ${credits} credits.`, "system");
+      if (credits >= 9) showComboBanner("💰 BIG PAYOUT");
     }
   },
   {
@@ -589,15 +618,34 @@ const SYSTEM_CARDS = [
     name: "Dead or Alive",
     type: "system",
     cost: 2,
-    description: "Deal 6 damage. If Marked, gain 6 block and deal 9 instead.",
+    description: "Deal 6 damage. If target has Mark, gain 6 block and deal 9 instead.",
     effect() {
       const enemy = getSelectedEnemy();
       if (!enemy) return;
-      if (enemy.isMarked) {
-        gainPlayerBlock(6 + state.player.shieldBonus, "Dead or Alive");
-        dealAttackDamageToEnemy(9, "Dead or Alive");
+
+      const mark = enemy.markStacks || 0;
+
+      if (mark >= 5) {
+        enemy.hull = 0;
+        enemy.block = 0;
+        log("Dead or Alive executes the target!", "system");
+        showComboBanner("☠ EXECUTION");
+        if (!state.combatEnded && allBountyTargetsDead() && anyEscortAlive() && !state.pendingExtraction) {
+          showExtractionOverlay();
+          return;
+        }
+        if (allEnemiesDead()) {
+          state.combatEnded = true;
+          if (state.encounterIndex >= RUN_LENGTH - 1) {
+            state.runWon = true;
+            log("All targets eliminated. Run complete.", "system");
+          } else {
+            log("Encounter cleared.", "system");
+          }
+        }
       } else {
-        dealAttackDamageToEnemy(6, "Dead or Alive");
+        const dmg = 6 + mark * 2;
+        dealAttackDamageToEnemy(dmg, "Dead or Alive");
       }
     }
   },
@@ -606,14 +654,15 @@ const SYSTEM_CARDS = [
     name: "Tracking Burst",
     type: "system",
     cost: 1,
-    description: "Deal 3 damage. If enemy is not Marked, apply Mark.",
+    description: "Deal 3 damage. If target has 0 Mark, apply 1 Mark.",
     effect() {
       const enemy = getSelectedEnemy();
       if (!enemy) return;
       dealAttackDamageToEnemy(3, "Tracking Burst");
-      if (!enemy.isMarked) {
-        enemy.isMarked = true;
-        log("Mark applied — enemy is Marked.", "system");
+      if ((enemy.markStacks || 0) === 0) {
+        const x = 1;
+        enemy.markStacks = (enemy.markStacks || 0) + x;
+        log(`Mark applied — +${x} Mark.`, "system");
       }
     }
   },
@@ -622,13 +671,14 @@ const SYSTEM_CARDS = [
     name: "Signal Flare",
     type: "system",
     cost: 1,
-    description: "Apply Mark. Gain 1 energy.",
+    description: "Apply 1 Mark. Gain 1 energy.",
     effect() {
       const enemy = getSelectedEnemy();
       if (!enemy) return;
-      enemy.isMarked = true;
+      const x = 1;
+      enemy.markStacks = (enemy.markStacks || 0) + x;
       state.player.energy += 1;
-      log("Mark applied — enemy is Marked.", "system");
+      log(`Mark applied — +${x} Mark.`, "system");
       log("Signal Flare grants 1 energy.", "system");
     }
   },
@@ -637,13 +687,14 @@ const SYSTEM_CARDS = [
     name: "Glint Strike",
     type: "system",
     cost: 1,
-    description: "Deal 1 damage. Apply Mark.",
+    description: "Deal 1 damage. Apply 1 Mark.",
     effect() {
       dealAttackDamageToEnemy(1, "Glint Strike");
       const enemy = getSelectedEnemy();
       if (!enemy) return;
-      enemy.isMarked = true;
-      log("Mark applied — enemy is Marked.", "system");
+      const x = 1;
+      enemy.markStacks = (enemy.markStacks || 0) + x;
+      log(`Mark applied — +${x} Mark.`, "system");
     }
   },
   {
@@ -651,13 +702,90 @@ const SYSTEM_CARDS = [
     name: "Hard Lock",
     type: "system",
     cost: 2,
-    description: "Apply Mark. Draw 2 cards.",
+    description: "Apply 2 Mark. Draw 2 cards.",
     effect() {
       const enemy = getSelectedEnemy();
       if (!enemy) return;
-      enemy.isMarked = true;
+      const x = 2;
+      enemy.markStacks = (enemy.markStacks || 0) + x;
       drawCards(2);
-      log("Mark applied — enemy is Marked.", "system");
+      log(`Mark applied — +${x} Mark.`, "system");
+    }
+  },
+  {
+    id: "charge-beam",
+    name: "Charge Beam",
+    type: "system",
+    cost: 1,
+    description: "Charge +3 Beam.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.beamCharge = (enemy.beamCharge || 0) + 3;
+      log("Beam charge increased by 3.", "system");
+    }
+  },
+  {
+    id: "laser-pulse",
+    name: "Laser Pulse",
+    type: "system",
+    cost: 1,
+    description: "Deal 2 damage. +2 per Beam.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      const beam = enemy.beamCharge || 0;
+      const dmg = 2 + beam * 2;
+      dealAttackDamageToEnemy(dmg, "Laser Pulse");
+    }
+  },
+  {
+    id: "full-beam",
+    name: "Full Beam",
+    type: "system",
+    cost: 2,
+    description: "Deal 6 damage. +4 per Beam. Consume all Beam.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      const beam = enemy.beamCharge || 0;
+      const dmg = 6 + beam * 4;
+      enemy.beamCharge = 0;
+      dealAttackDamageToEnemy(dmg, "Full Beam");
+      log("Full Beam fires — all charge released.", "system");
+    }
+  },
+  {
+    id: "overfocus",
+    name: "Overfocus",
+    type: "system",
+    cost: 1,
+    description: "Double current Beam.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.beamCharge = (enemy.beamCharge || 0) * 2;
+      log("Beam charge doubled.", "system");
+    }
+  },
+  {
+    id: "recalibrate",
+    name: "Recalibrate",
+    type: "system",
+    cost: 1,
+    description: "Convert all Beam into Mark.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+
+      const beam = enemy.beamCharge || 0;
+      if (beam <= 0) return;
+
+      enemy.beamCharge = 0;
+      enemy.markStacks = (enemy.markStacks || 0) + beam;
+
+      log(`Recalibrate converts ${beam} Beam into Mark.`, "system");
+      showComboBanner("⚡→🎯 RELOCK");
     }
   }
 ];
@@ -677,7 +805,11 @@ const MISSILE_CARDS = [
 
 const ALL_CARDS = [...SYSTEM_CARDS, ...MISSILE_CARDS];
 
-/** UI / archetype: weapon (damage), system (defense/draw/utility), tactical (setup / Mark / synergy) */
+function getCardById(cardId) {
+  return ALL_CARDS.find(card => card.id === cardId) || null;
+}
+
+/** UI / archetype: weapon (damage), system (defense/draw/utility), tactical (setup / Mark / synergy), beam (laser scaling) */
 const CARD_ROLE_BY_ID = {
   "pulse-shot": "weapon",
   "overcharge-cannon": "weapon",
@@ -693,6 +825,7 @@ const CARD_ROLE_BY_ID = {
   "patch-hull": "system",
   "reinforce-shields": "system",
   "capacitor-burst": "system",
+  "debug-delete": "system",
   "tactical-scan": "system",
   "evasive-burst": "system",
   "deep-cache": "system",
@@ -701,20 +834,27 @@ const CARD_ROLE_BY_ID = {
   "covering-fire": "system",
   "skirmish-step": "system",
   "collection-sweep": "system",
-  "target-lock": "tactical",
+  "target-lock": "beam",
   "hunters-tag": "tactical",
   "paint-the-target": "tactical",
   "pursuit-sweep": "tactical",
   "tracking-burst": "tactical",
   "signal-flare": "tactical",
   "glint-strike": "tactical",
-  "hard-lock": "tactical"
+  "hard-lock": "tactical",
+  "charge-beam": "beam",
+  "laser-pulse": "beam",
+  "full-beam": "beam",
+  overfocus: "beam",
+  recalibrate: "mark"
 };
 
 function getCardCategoryLabel(card) {
   const role = card.cardRole || "system";
   if (role === "weapon") return "Weapon";
   if (role === "tactical") return "Tactical";
+  if (role === "beam") return "Beam";
+  if (role === "mark") return "Mark";
   return "System";
 }
 
@@ -726,7 +866,10 @@ const STARTING_DECK_IDS = [
   "brace",
   "brace",
   "missile",
-  "missile"
+  "missile",
+  "debug-delete",
+  "charge-beam",
+  "laser-pulse"
 ];
 
 const REWARD_POOL_IDS = [
@@ -758,7 +901,12 @@ const REWARD_POOL_IDS = [
   "tracking-burst",
   "signal-flare",
   "glint-strike",
-  "hard-lock"
+  "hard-lock",
+  "charge-beam",
+  "laser-pulse",
+  "full-beam",
+  "overfocus",
+  "recalibrate"
 ];
 
 const ENEMY_TYPES = [
@@ -895,8 +1043,44 @@ const els = {
   overlayTitle: document.getElementById("overlayTitle"),
   overlayText: document.getElementById("overlayText"),
   overlayBtn: document.getElementById("overlayBtn"),
-  rewardOptions: document.getElementById("rewardOptions")
+  rewardOptions: document.getElementById("rewardOptions"),
+  comboBanner: document.getElementById("comboBanner")
 };
+
+let comboBannerTimeout = null;
+
+function showComboBanner(text) {
+  if (!els.comboBanner) return;
+
+  if (comboBannerTimeout) {
+    clearTimeout(comboBannerTimeout);
+    comboBannerTimeout = null;
+  }
+
+  els.comboBanner.textContent = text;
+  els.comboBanner.classList.remove("hidden", "fade-out");
+
+  comboBannerTimeout = setTimeout(() => {
+    els.comboBanner.classList.add("fade-out");
+
+    comboBannerTimeout = setTimeout(() => {
+      els.comboBanner.classList.add("hidden");
+      els.comboBanner.classList.remove("fade-out");
+      comboBannerTimeout = null;
+    }, 220);
+  }, 900);
+}
+
+function hideComboBanner() {
+  if (!els.comboBanner) return;
+  if (comboBannerTimeout) {
+    clearTimeout(comboBannerTimeout);
+    comboBannerTimeout = null;
+  }
+  els.comboBanner.classList.add("hidden");
+  els.comboBanner.classList.remove("fade-out");
+  els.comboBanner.textContent = "";
+}
 
 function renderEnemies() {
   if (!els.enemies) return;
@@ -919,7 +1103,7 @@ function renderEnemies() {
         ? `<span class="badge bounty-badge">BOUNTY</span>`
         : `<span class="badge escort-badge">ESCORT</span>`;
 
-    const markBadge = enemy.isMarked ? `<span class="badge mark-badge">MARKED</span>` : "";
+    const markBadge = (enemy.markStacks || 0) > 0 ? `<span class="badge mark-badge">MARKED</span>` : "";
 
     const card = document.createElement("div");
     card.className = `enemy-card ${isSelected ? "selected" : ""}`.trim();
@@ -949,7 +1133,11 @@ function renderEnemies() {
         </div>
         <div class="enemy-mini">
           <div class="label">Mark</div>
-          <div class="value">${enemy.isMarked ? "MARKED" : "CLEAR"}</div>
+          <div class="value">${enemy.markStacks || 0}</div>
+        </div>
+        <div class="enemy-mini">
+          <div class="label">Beam</div>
+          <div class="value">${enemy.beamCharge || 0}</div>
         </div>
         <div class="enemy-mini">
           <div class="label">Target</div>
@@ -999,6 +1187,10 @@ function shuffle(array) {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
+}
+
+function pickRandomCards(array, count) {
+  return shuffle(array).slice(0, count);
 }
 
 function log(message, type = "") {
@@ -1109,10 +1301,11 @@ function showMapOverlay() {
   const currentNode = getCurrentNode();
   if (!currentNode) return;
 
+  hideComboBanner();
   clearNonCombatPresentation();
   state.pendingReward = true;
 
-  els.overlayTitle.textContent = `Star Map — Sector ${state.sectorNumber}`;
+  els.overlayTitle.textContent = `Star Map — Sector ${state.sectorNumber} — Notoriety: ${getNotorietyLabel(state.notoriety)}`;
   els.overlayText.textContent = `Current Node: ${currentNode.id} • ${formatNodeLabel(currentNode)}${formatNodeStatus(currentNode)} • Fuel: ${state.player.fuel} • ${getSectorProgressText()}`;
   els.overlayBtn.classList.add("hidden");
   els.rewardOptions.innerHTML = "";
@@ -1229,6 +1422,13 @@ function resolveCurrentNode() {
     return;
   }
 
+  if (node.type === "shop") {
+    state.currentScreen = "combat";
+    hideOverlay();
+    showShopOverlay();
+    return;
+  }
+
   if (node.type === "gate") {
     state.currentScreen = "combat";
     hideOverlay();
@@ -1259,6 +1459,7 @@ function finishNodeAfterNonCombat() {
 }
 
 function showDockOverlay() {
+  hideComboBanner();
   clearNonCombatPresentation();
   state.pendingReward = true;
 
@@ -1310,6 +1511,128 @@ function showDockOverlay() {
   render();
 }
 
+function showShopOverlay() {
+  clearNonCombatPresentation();
+  state.pendingReward = true;
+
+  els.overlayTitle.textContent = "Babu's Emporium";
+  els.overlayText.textContent =
+    "A strange alien merchant offers questionable tech, polished salvage, and suspiciously fair prices.";
+
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  const shopCards = pickRandomCards(REWARD_POOL_IDS, 3);
+
+  shopCards.forEach(cardId => {
+    const card = getCardById(cardId);
+    if (!card) return;
+
+    const btn = document.createElement("button");
+    btn.className = "reward-option";
+
+    btn.innerHTML = `
+      <div class="reward-name">${card.name}</div>
+      <div class="reward-meta">Buy for 25 credits • ${card.description}</div>
+    `;
+
+    btn.addEventListener("click", () => {
+      if (state.runCredits < 25) {
+        log("Not enough credits.", "enemy");
+        return;
+      }
+
+      state.runCredits -= 25;
+      state.runDeck.push(cardId);
+
+      log(`Bought ${card.name}.`, "system");
+      returnToMap();
+    });
+
+    els.rewardOptions.appendChild(btn);
+  });
+
+  const removeBtn = document.createElement("button");
+  removeBtn.className = "reward-option";
+  removeBtn.innerHTML = `
+    <div class="reward-name">Remove a Card</div>
+    <div class="reward-meta">Cost: 40 credits</div>
+  `;
+  removeBtn.addEventListener("click", () => {
+    if (state.runCredits < 40) {
+      log("Not enough credits.", "enemy");
+      return;
+    }
+
+    showRemoveCardOverlay();
+  });
+  els.rewardOptions.appendChild(removeBtn);
+
+  const leaveBtn = document.createElement("button");
+  leaveBtn.className = "reward-option";
+  leaveBtn.innerHTML = `
+    <div class="reward-name">Leave</div>
+    <div class="reward-meta">Return to map</div>
+  `;
+  leaveBtn.addEventListener("click", () => returnToMap());
+  els.rewardOptions.appendChild(leaveBtn);
+
+  render();
+}
+
+function showRemoveCardOverlay() {
+  clearNonCombatPresentation();
+  state.pendingReward = true;
+
+  els.overlayTitle.textContent = "Remove a Card";
+  els.overlayText.textContent = "Select one card to remove from your deck.";
+
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  state.runDeck.forEach((cardId, index) => {
+    const card = getCardById(cardId);
+    if (!card) return;
+
+    const btn = document.createElement("button");
+    btn.className = "reward-option";
+    btn.innerHTML = `
+      <div class="reward-name">${card.name}</div>
+      <div class="reward-meta">Remove for 40 credits</div>
+    `;
+
+    btn.addEventListener("click", () => {
+      if (state.runCredits < 40) {
+        log("Not enough credits.", "enemy");
+        return;
+      }
+
+      state.runCredits -= 40;
+      state.runDeck.splice(index, 1);
+
+      log(`Removed ${card.name} from deck.`, "system");
+      returnToMap();
+    });
+
+    els.rewardOptions.appendChild(btn);
+  });
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "reward-option";
+  cancelBtn.innerHTML = `
+    <div class="reward-name">Cancel</div>
+    <div class="reward-meta">Return to Babu's Emporium</div>
+  `;
+  cancelBtn.addEventListener("click", () => showShopOverlay());
+  els.rewardOptions.appendChild(cancelBtn);
+
+  render();
+}
+
 function startNextSector() {
   state.sectorNumber += 1;
   state.gateUnlocked = false;
@@ -1333,6 +1656,7 @@ function startNextSector() {
   state.inBossCombat = false;
   state.pendingBoss = false;
   log(`Jumped to Sector ${state.sectorNumber}. Fuel restored to ${state.player.fuel}.`, "system");
+  hideComboBanner();
   returnToMap();
 }
 
@@ -1340,6 +1664,7 @@ function showPlanetOverlay() {
   const node = getCurrentNode();
   if (!node) return;
 
+  hideComboBanner();
   clearNonCombatPresentation();
   state.pendingReward = true;
 
@@ -1410,6 +1735,14 @@ function getSectorUpgradeFlavor(sectorNumber) {
   };
 }
 
+function getNotorietyLabel(notoriety) {
+  if (notoriety <= 0) return "Unknown";
+  if (notoriety === 1) return "Noticed";
+  if (notoriety === 2) return "Tracked";
+  if (notoriety === 3) return "Feared";
+  return "Hunted";
+}
+
 function buildSectorBossEncounter(sectorNumber) {
   if (sectorNumber === 1) {
     const lead = getEnemyTypeById("burst-bounty") || ENEMY_TYPES[Math.min(3, ENEMY_TYPES.length - 1)];
@@ -1441,6 +1774,7 @@ function showBossIntroOverlay() {
   const bossName = getSectorBossName(state.sectorNumber);
   const bossDescription = getSectorBossDescription(state.sectorNumber);
 
+  hideComboBanner();
   clearNonCombatPresentation();
   state.pendingReward = true;
 
@@ -1484,6 +1818,7 @@ function showGateOverlay() {
   const node = getCurrentNode();
   if (!node) return;
 
+  hideComboBanner();
   clearNonCombatPresentation();
   state.pendingReward = true;
 
@@ -1524,11 +1859,12 @@ function showGateOverlay() {
 }
 
 function showShipUpgradeOverlay() {
+  hideComboBanner();
   state.pendingReward = true;
   const flavor = getSectorUpgradeFlavor(state.sectorNumber);
 
   els.overlayTitle.textContent = flavor.title;
-  els.overlayText.textContent = flavor.text;
+  els.overlayText.textContent = `${flavor.text} Current notoriety: ${getNotorietyLabel(state.notoriety)}.`;
   els.overlayBtn.classList.add("hidden");
   els.rewardOptions.innerHTML = "";
   els.rewardOptions.classList.remove("hidden");
@@ -1544,6 +1880,7 @@ function showShipUpgradeOverlay() {
     state.player.baseEnergy += 1;
     state.player.energy = state.player.baseEnergy + state.player.reactorBonus;
     hideOverlay();
+    state.notoriety += 1;
     startNextSector();
   });
 
@@ -1557,6 +1894,7 @@ function showShipUpgradeOverlay() {
     state.player.maxHull += 10;
     state.player.hull += 10;
     hideOverlay();
+    state.notoriety += 1;
     startNextSector();
   });
 
@@ -1570,6 +1908,7 @@ function showShipUpgradeOverlay() {
     state.player.maxFuel += 1;
     state.player.fuel = Math.min(state.player.fuel + 1, state.player.maxFuel);
     hideOverlay();
+    state.notoriety += 1;
     startNextSector();
   });
 
@@ -1775,7 +2114,7 @@ function buildEnemyFromTemplate(template, role, tier) {
     maxHull: scaledMaxHull,
     hull: scaledMaxHull,
     block: 0,
-    isMarked: false,
+    markStacks: 0,
     role,
     attackReduction: 0,
     getIntent: scaledGetIntent,
@@ -2010,8 +2349,8 @@ function startRun() {
     weaponBonus: 0,
     shieldBonus: 0,
     reactorBonus: 0,
-    maxFuel: 5,
-    fuel: 5
+    maxFuel: 100,
+    fuel: 100
   };
 
   state.runDeck = makeRunDeck();
@@ -2030,7 +2369,10 @@ function startRun() {
   state.inBossCombat = false;
   state.pendingBoss = false;
   state.sectorNumber = 1;
+  state.notoriety = 0;
   els.log.innerHTML = "";
+
+  hideComboBanner();
 
   state.mapNodes = createSectorByNumber(state.sectorNumber);
   state.currentNodeId = "A";
@@ -2089,6 +2431,14 @@ function dealDamageToEnemy(amount, sourceName) {
   } else {
     log(`${sourceName} deals ${hpDamage} damage.`, sourceName === "Missile" ? "missile" : "");
   }
+
+  if (amount >= 10) log("⚡ LASER LOCKED!", "system");
+  if (amount >= 20) log("🔥 FULL BEAM RELEASE!", "system");
+  if (amount >= 30) log("💀 ANNIHILATION!", "system");
+
+  if (amount >= 10) showComboBanner("⚡ LASER LOCKED");
+  if (amount >= 20) showComboBanner("🔥 FULL BEAM RELEASE");
+  if (amount >= 30) showComboBanner("💀 ANNIHILATION");
 
   if (enemy.hull <= 0) {
     log(`${enemy.name} is destroyed.`, "system");
@@ -2230,10 +2580,10 @@ function resolveEnemyTurn() {
   });
 
   alive.forEach(enemy => {
-    if (enemy.isMarked) {
-      log(`Mark clears from ${enemy.name} at end of enemy turn.`, "enemy");
+    if ((enemy.markStacks || 0) > 0) {
+      enemy.markStacks = Math.max(0, enemy.markStacks - 1);
+      log(`Mark decays on ${enemy.name}.`, "enemy");
     }
-    enemy.isMarked = false;
   });
 }
 
@@ -2298,6 +2648,9 @@ function handleCombatEnd() {
     );
     return;
   }
+
+  state.runCredits += 5;
+  log(`Cleanup bonus: +5 credits. Total credits: ${state.runCredits}.`, "system");
 
   const currentNode = getCurrentNode();
   if (
