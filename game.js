@@ -30,16 +30,98 @@ const state = {
   currentNodeId: null,
   visitedNodeIds: [],
   clearedNodeIds: [],
-  currentScreen: "combat",
+  currentScreen: "start",
   sectorNumber: 1,
   notoriety: 0,
   gateUnlocked: false,
   inBossCombat: false,
-  pendingBoss: false
+  pendingBoss: false,
+  shopInventory: [],
+  selectedShipId: "heavy-fighter"
 };
 
 const SHIP_NAME = "Bounty Hunter";
 const SHIP_PASSIVE_TEXT = "Gain credits after each encounter win.";
+const SHIP_OPTIONS = [
+  {
+    id: "heavy-fighter",
+    name: "Heavy Fighter",
+    description: "Aggressive combat ship. Starts with Beam-focused damage tools."
+  },
+  {
+    id: "exploration-vessel",
+    name: "Exploration Vessel",
+    description: "Long-range explorer. Starts with extra resources and map-friendly economy."
+  },
+  {
+    id: "gunship",
+    name: "Gunship",
+    description: "Heavy assault platform. Starts with strong hull and defensive bruiser tools."
+  },
+  {
+    id: "stealth-bomber",
+    name: "Stealth Bomber",
+    description: "Precision strike craft. Starts with Mark setup and execution tools."
+  },
+  {
+    id: "mining-ship",
+    name: "Mining Ship",
+    description: "Industrial platform. Starts with extra credits and a mining laser package."
+  }
+];
+
+function getShipDisplayName(shipId) {
+  const ship = SHIP_OPTIONS.find(s => s.id === shipId);
+  return ship ? ship.name : "Bounty Hunter";
+}
+
+function getShipBaseHull(shipId) {
+  if (shipId === "heavy-fighter") return 60;
+  if (shipId === "exploration-vessel") return 70;
+  if (shipId === "gunship") return 90;
+  if (shipId === "stealth-bomber") return 40;
+  if (shipId === "mining-ship") return 80;
+  return 50;
+}
+
+function getShipStartingCredits(shipId) {
+  if (shipId === "exploration-vessel") return 25;
+  if (shipId === "mining-ship") return 40;
+  return 0;
+}
+
+function getShipStartingDeckIds(shipId) {
+  const base = [
+    "pulse-shot",
+    "pulse-shot",
+    "brace",
+    "brace",
+    "missile",
+    "missile"
+  ];
+
+  if (shipId === "heavy-fighter") {
+    return [...base, "charge-beam", "laser-pulse", "full-beam"];
+  }
+
+  if (shipId === "exploration-vessel") {
+    return [...base, "tactical-scan", "reroute-power", "evasive-burst"];
+  }
+
+  if (shipId === "gunship") {
+    return [...base, "brace", "reinforce-shields", "collection-sweep"];
+  }
+
+  if (shipId === "stealth-bomber") {
+    return [...base, "hunters-tag", "paint-the-target", "claim-shot"];
+  }
+
+  if (shipId === "mining-ship") {
+    return [...base, "pulse-shot", "collection-sweep", "overcharge-cannon"];
+  }
+
+  return [...STARTING_DECK_IDS];
+}
 const BASE_CREDIT_REWARD = 10;
 const CREDIT_REWARD_STEP = 5;
 const ELITE_CLEAR_BONUS = 15;
@@ -56,56 +138,93 @@ function rollNextNodeType() {
 
 function createSector1() {
   return [
-    { id: "A", type: "combat", danger: "easy", neighbors: ["B", "C"], x: 90, y: 180 },
-    { id: "B", type: "dock", neighbors: ["A", "D", "E"], x: 220, y: 110 },
-    { id: "C", type: "planet", neighbors: ["A", "F"], x: 220, y: 250 },
-    { id: "D", type: "combat", danger: "medium", neighbors: ["B", "G"], x: 360, y: 70 },
-    { id: "E", type: "combat", danger: "medium", neighbors: ["B", "G", "H", "K"], x: 360, y: 160 },
-    { id: "F", type: "combat", danger: "medium", neighbors: ["C", "H"], x: 360, y: 270 },
-    { id: "G", type: "dock", neighbors: ["D", "E", "I"], x: 500, y: 110 },
-    { id: "H", type: "planet", neighbors: ["E", "F", "J", "K"], x: 500, y: 230 },
-    { id: "K", type: "shop", neighbors: ["E", "H"], x: 430, y: 320 },
-    { id: "I", type: "elite", danger: "elite", neighbors: ["G", "J"], x: 640, y: 90 },
-    { id: "J", type: "gate", neighbors: ["H", "I"], x: 640, y: 220 }
+    { id: "S", type: "start", neighbors: ["A", "B", "C"], x: 220, y: 220 },
+    { id: "A", type: "combat", danger: "easy", neighbors: ["S", "B", "D", "M"], x: 340, y: 130 },
+    { id: "B", type: "dock", neighbors: ["S", "A", "C", "E", "N"], x: 360, y: 230 },
+    { id: "C", type: "planet", neighbors: ["S", "B", "F", "O"], x: 320, y: 340 },
+    { id: "D", type: "combat", danger: "medium", neighbors: ["A", "E", "G", "P"], x: 500, y: 90 },
+    { id: "E", type: "combat", danger: "medium", neighbors: ["B", "D", "F", "G", "H", "K"], x: 540, y: 210 },
+    { id: "F", type: "combat", danger: "medium", neighbors: ["C", "E", "H", "Q"], x: 510, y: 340 },
+    { id: "G", type: "dock", neighbors: ["D", "E", "I", "P"], x: 700, y: 130 },
+    { id: "H", type: "planet", neighbors: ["E", "F", "J", "K", "Q"], x: 720, y: 300 },
+    { id: "I", type: "elite", danger: "elite", neighbors: ["G", "J"], x: 900, y: 150 },
+    { id: "J", type: "gate", neighbors: ["H", "I"], x: 950, y: 280 },
+    { id: "K", type: "shop", neighbors: ["E", "H", "N"], x: 610, y: 420 },
+    { id: "M", type: "combat", danger: "easy", neighbors: ["A", "N"], x: 450, y: 30 },
+    { id: "N", type: "planet", neighbors: ["B", "M", "K", "O"], x: 470, y: 440 },
+    { id: "O", type: "combat", danger: "medium", neighbors: ["C", "N", "Q"], x: 360, y: 500 },
+    { id: "P", type: "dock", neighbors: ["D", "G", "Q"], x: 640, y: 30 },
+    { id: "Q", type: "combat", danger: "hard", neighbors: ["F", "H", "O", "P"], x: 670, y: 500 }
   ];
 }
 
 function createSector2() {
   return [
-    { id: "A", type: "combat", danger: "easy", neighbors: ["B", "C"], x: 90, y: 180 },
-    { id: "B", type: "combat", danger: "medium", neighbors: ["A", "D", "E"], x: 220, y: 110 },
-    { id: "C", type: "dock", neighbors: ["A", "F"], x: 220, y: 250 },
-    { id: "D", type: "planet", neighbors: ["B", "G"], x: 360, y: 70 },
-    { id: "E", type: "combat", danger: "medium", neighbors: ["B", "G", "H", "K"], x: 360, y: 160 },
-    { id: "F", type: "combat", danger: "medium", neighbors: ["C", "H"], x: 360, y: 270 },
-    { id: "G", type: "dock", neighbors: ["D", "E", "I"], x: 500, y: 110 },
-    { id: "H", type: "planet", neighbors: ["E", "F", "J", "K"], x: 500, y: 230 },
-    { id: "K", type: "shop", neighbors: ["E", "H"], x: 430, y: 320 },
-    { id: "I", type: "elite", danger: "elite", neighbors: ["G", "J"], x: 640, y: 90 },
-    { id: "J", type: "gate", neighbors: ["H", "I"], x: 640, y: 220 }
+    { id: "S", type: "start", neighbors: ["A", "B", "C"], x: 220, y: 220 },
+    { id: "A", type: "combat", danger: "easy", neighbors: ["S", "B", "D", "M"], x: 330, y: 120 },
+    { id: "B", type: "combat", danger: "medium", neighbors: ["S", "A", "C", "E", "N"], x: 360, y: 220 },
+    { id: "C", type: "dock", neighbors: ["S", "B", "F", "O"], x: 330, y: 340 },
+    { id: "D", type: "planet", neighbors: ["A", "E", "G", "L", "P"], x: 500, y: 80 },
+    { id: "E", type: "combat", danger: "medium", neighbors: ["B", "D", "F", "G", "H", "K"], x: 540, y: 210 },
+    { id: "F", type: "combat", danger: "medium", neighbors: ["C", "E", "H", "Q"], x: 500, y: 340 },
+    { id: "G", type: "dock", neighbors: ["D", "E", "I", "L", "P"], x: 700, y: 120 },
+    { id: "H", type: "planet", neighbors: ["E", "F", "J", "K", "Q"], x: 710, y: 300 },
+    { id: "I", type: "elite", danger: "elite", neighbors: ["G", "J"], x: 900, y: 150 },
+    { id: "J", type: "gate", neighbors: ["H", "I"], x: 950, y: 280 },
+    { id: "K", type: "shop", neighbors: ["E", "H", "N"], x: 620, y: 420 },
+    { id: "L", type: "distress", neighbors: ["D", "G", "M"], x: 620, y: 20 },
+    { id: "M", type: "combat", danger: "easy", neighbors: ["A", "L", "P"], x: 450, y: 20 },
+    { id: "N", type: "planet", neighbors: ["B", "K", "O"], x: 460, y: 430 },
+    { id: "O", type: "combat", danger: "medium", neighbors: ["C", "N", "Q"], x: 340, y: 500 },
+    { id: "P", type: "dock", neighbors: ["D", "G", "M", "Q"], x: 640, y: 40 },
+    { id: "Q", type: "combat", danger: "hard", neighbors: ["F", "H", "O", "P"], x: 680, y: 500 }
   ];
 }
 
 function createSector3() {
   return [
-    { id: "A", type: "combat", danger: "easy", neighbors: ["B", "C"], x: 90, y: 180 },
-    { id: "B", type: "combat", danger: "medium", neighbors: ["A", "D"], x: 220, y: 110 },
-    { id: "C", type: "planet", neighbors: ["A", "E"], x: 220, y: 250 },
-    { id: "D", type: "dock", neighbors: ["B", "F"], x: 360, y: 80 },
-    { id: "E", type: "combat", danger: "medium", neighbors: ["C", "F", "G", "K"], x: 360, y: 210 },
-    { id: "F", type: "combat", danger: "medium", neighbors: ["D", "E", "H"], x: 500, y: 110 },
-    { id: "G", type: "planet", neighbors: ["E", "I"], x: 500, y: 260 },
-    { id: "H", type: "dock", neighbors: ["F", "I", "J", "K"], x: 640, y: 110 },
-    { id: "K", type: "shop", neighbors: ["E", "H"], x: 570, y: 320 },
-    { id: "I", type: "elite", danger: "elite", neighbors: ["G", "H", "J"], x: 640, y: 240 },
-    { id: "J", type: "gate", neighbors: ["H", "I"], x: 760, y: 170 }
+    { id: "S", type: "start", neighbors: ["A", "B", "C"], x: 220, y: 220 },
+    { id: "A", type: "combat", danger: "easy", neighbors: ["S", "B", "D", "M"], x: 330, y: 120 },
+    { id: "B", type: "combat", danger: "medium", neighbors: ["S", "A", "C", "E", "N"], x: 360, y: 220 },
+    { id: "C", type: "planet", neighbors: ["S", "B", "F", "O"], x: 330, y: 340 },
+    { id: "D", type: "dock", neighbors: ["A", "E", "F", "P"], x: 500, y: 90 },
+    { id: "E", type: "combat", danger: "medium", neighbors: ["B", "D", "F", "G", "K"], x: 540, y: 210 },
+    { id: "F", type: "combat", danger: "medium", neighbors: ["C", "D", "E", "H", "Q"], x: 500, y: 330 },
+    { id: "G", type: "planet", neighbors: ["E", "I", "L", "P"], x: 700, y: 180 },
+    { id: "H", type: "dock", neighbors: ["F", "I", "J", "K", "Q"], x: 700, y: 320 },
+    { id: "I", type: "elite", danger: "elite", neighbors: ["G", "H", "J"], x: 900, y: 180 },
+    { id: "J", type: "gate", neighbors: ["H", "I", "L"], x: 960, y: 280 },
+    { id: "K", type: "shop", neighbors: ["E", "H", "N"], x: 620, y: 430 },
+    { id: "L", type: "black-market", neighbors: ["G", "J", "M"], x: 900, y: 380 },
+    { id: "M", type: "combat", danger: "easy", neighbors: ["A", "L", "P"], x: 450, y: 20 },
+    { id: "N", type: "planet", neighbors: ["B", "K", "O"], x: 460, y: 450 },
+    { id: "O", type: "combat", danger: "medium", neighbors: ["C", "N", "Q"], x: 340, y: 510 },
+    { id: "P", type: "dock", neighbors: ["D", "G", "M"], x: 650, y: 40 },
+    { id: "Q", type: "combat", danger: "hard", neighbors: ["F", "H", "O"], x: 670, y: 510 }
   ];
 }
 
+function randomizeSectorNodes(nodes) {
+  const flexibleIds = ["M", "N", "O", "P", "Q"];
+  const flexibleTypes = ["combat", "combat", "planet", "dock", "shop", "distress"];
+
+  return nodes.map(node => {
+    if (!flexibleIds.includes(node.id)) return node;
+
+    const nextType = pickRandom(flexibleTypes);
+
+    if (nextType === "combat") {
+      return { ...node, type: "combat", danger: pickRandom(["easy", "medium", "hard"]) };
+    }
+
+    return { ...node, type: nextType };
+  });
+}
+
 function createSectorByNumber(sectorNumber) {
-  if (sectorNumber === 1) return createSector1();
-  if (sectorNumber === 2) return createSector2();
-  return createSector3();
+  if (sectorNumber === 1) return randomizeSectorNodes(createSector1());
+  if (sectorNumber === 2) return randomizeSectorNodes(createSector2());
+  return randomizeSectorNodes(createSector3());
 }
 
 function getNodeById(nodeId) {
@@ -118,12 +237,17 @@ function getCurrentNode() {
 
 function formatNodeLabel(node) {
   if (!node) return "Unknown";
+  if (node.type === "start") return "Hangar";
   if (node.type === "combat") return `Combat (${node.danger || "unknown"})`;
   if (node.type === "elite") return "Elite";
-  if (node.type === "gate") return state.gateUnlocked ? "Gate (Unlocked)" : "Gate (Locked)";
+  if (node.type === "gate") {
+    return state.gateUnlocked ? "Boss Contract (Available)" : "Boss Contract (Locked)";
+  }
   if (node.type === "dock") return "Dock";
   if (node.type === "planet") return "Planet";
   if (node.type === "shop") return "Shop";
+  if (node.type === "distress") return "Distress Signal";
+  if (node.type === "black-market") return "Black Market";
   return node.type;
 }
 
@@ -267,7 +391,7 @@ function renderStarMapSvg() {
 
   return `
     <div class="star-map-shell">
-      <svg class="star-map-svg" viewBox="0 0 860 340" width="100%" height="420" role="img" aria-label="Sector star map">
+      <svg class="star-map-svg" viewBox="0 0 1120 560" width="100%" height="560" role="img" aria-label="Sector star map">
         ${lineParts.join("")}
         ${nodeParts.join("")}
       </svg>
@@ -914,6 +1038,7 @@ const ENEMY_TYPES = [
     id: "scout",
     name: "Scout Drone",
     difficulty: "easy",
+    trait: "overcharged",
     maxHull: 10,
     getIntent(turn) {
       const cycle = [
@@ -971,6 +1096,7 @@ const ENEMY_TYPES = [
     id: "interceptor",
     name: "Interceptor Ace",
     difficulty: "hard",
+    trait: "jammer",
     maxHull: 18,
     getIntent(turn) {
       const cycle = [
@@ -986,6 +1112,7 @@ const ENEMY_TYPES = [
     id: "support-escort",
     name: "Support Escort",
     difficulty: "hard",
+    trait: "shielder",
     maxHull: 16,
     getIntent(turn) {
       const cycle = [
@@ -1044,7 +1171,21 @@ const els = {
   overlayText: document.getElementById("overlayText"),
   overlayBtn: document.getElementById("overlayBtn"),
   rewardOptions: document.getElementById("rewardOptions"),
-  comboBanner: document.getElementById("comboBanner")
+  comboBanner: document.getElementById("comboBanner"),
+  startScreen: document.getElementById("startScreen"),
+  shipSelectScreen: document.getElementById("shipSelectScreen"),
+  shipSelectOptions: document.getElementById("shipSelectOptions"),
+  startRunFlowBtn: document.getElementById("startRunFlowBtn"),
+  mapScreen: document.getElementById("mapScreen"),
+  mapTitleText: document.getElementById("mapTitleText"),
+  mapSubtitleText: document.getElementById("mapSubtitleText"),
+  mapCurrentInfo: document.getElementById("mapCurrentInfo"),
+  mapSvgWrap: document.getElementById("mapSvgWrap"),
+  mapActionArea: document.getElementById("mapActionArea"),
+  combatGrid: document.querySelector(".combat-grid"),
+  controls: document.querySelector(".controls"),
+  handSection: document.querySelector(".hand-section"),
+  logSection: document.querySelector(".log-section")
 };
 
 let comboBannerTimeout = null;
@@ -1082,6 +1223,36 @@ function hideComboBanner() {
   els.comboBanner.textContent = "";
 }
 
+function showStartScreen() {
+  state.currentScreen = "start";
+  render();
+}
+
+function showShipSelection() {
+  state.currentScreen = "ship-select";
+  renderShipSelection();
+  render();
+}
+
+function renderShipSelection() {
+  if (!els.shipSelectOptions) return;
+
+  els.shipSelectOptions.innerHTML = "";
+
+  SHIP_OPTIONS.forEach(ship => {
+    const btn = document.createElement("button");
+    btn.className = "reward-option";
+    btn.innerHTML = `
+      <div class="reward-name">${ship.name}</div>
+      <div class="reward-meta">${ship.description}</div>
+    `;
+    btn.addEventListener("click", () => {
+      startRun(ship.id);
+    });
+    els.shipSelectOptions.appendChild(btn);
+  });
+}
+
 function renderEnemies() {
   if (!els.enemies) return;
   els.enemies.innerHTML = "";
@@ -1102,8 +1273,12 @@ function renderEnemies() {
       enemy.role === "bounty"
         ? `<span class="badge bounty-badge">BOUNTY</span>`
         : `<span class="badge escort-badge">ESCORT</span>`;
+    const bossBadge = enemy.bossType ? `<span class="badge bounty-badge">BOSS</span>` : "";
 
     const markBadge = (enemy.markStacks || 0) > 0 ? `<span class="badge mark-badge">MARKED</span>` : "";
+    const traitBadge = enemy.trait
+      ? `<span class="badge trait-badge trait-${enemy.trait}">${enemy.trait.toUpperCase()}</span>`
+      : "";
 
     const card = document.createElement("div");
     card.className = `enemy-card ${isSelected ? "selected" : ""}`.trim();
@@ -1114,8 +1289,10 @@ function renderEnemies() {
           <div class="muted">${enemy.difficulty.toUpperCase()}</div>
         </div>
         <div class="enemy-badges">
+          ${bossBadge}
           ${roleBadge}
           ${markBadge}
+          ${traitBadge}
         </div>
       </div>
 
@@ -1138,6 +1315,10 @@ function renderEnemies() {
         <div class="enemy-mini">
           <div class="label">Beam</div>
           <div class="value">${enemy.beamCharge || 0}</div>
+        </div>
+        <div class="enemy-mini">
+          <div class="label">Trait</div>
+          <div class="value">${enemy.trait || "None"}</div>
         </div>
         <div class="enemy-mini">
           <div class="label">Target</div>
@@ -1172,12 +1353,12 @@ function makeCard(id) {
   };
 }
 
-function makeStartingDeck() {
-  return STARTING_DECK_IDS.map(id => makeCard(id));
+function makeStartingDeck(shipId = "heavy-fighter") {
+  return getShipStartingDeckIds(shipId).map(id => makeCard(id));
 }
 
-function makeRunDeck() {
-  return [...STARTING_DECK_IDS];
+function makeRunDeck(shipId = "heavy-fighter") {
+  return [...getShipStartingDeckIds(shipId)];
 }
 
 function shuffle(array) {
@@ -1354,6 +1535,53 @@ function showMapOverlay() {
   render();
 }
 
+function renderMapScreen() {
+  const currentNode = getCurrentNode();
+  if (!currentNode) return;
+
+  hideOverlay();
+  hideComboBanner();
+
+  if (!els.mapTitleText || !els.mapSubtitleText || !els.mapCurrentInfo || !els.mapSvgWrap || !els.mapActionArea) return;
+
+  els.mapTitleText.textContent = `Star Map — Sector ${state.sectorNumber}`;
+  els.mapSubtitleText.textContent = `Notoriety: ${getNotorietyLabel(state.notoriety)} • Fuel: ${state.player.fuel} • ${getSectorProgressText()}`;
+
+  els.mapCurrentInfo.innerHTML = `
+    <div class="reward-name">Current Location</div>
+    <div class="reward-meta">Node ${currentNode.id} • ${formatNodeLabel(currentNode)}${formatNodeStatus(currentNode)}</div>
+  `;
+
+  els.mapSvgWrap.innerHTML = renderStarMapSvg();
+
+  els.mapActionArea.innerHTML = "";
+
+  const engageButton = document.createElement("button");
+  engageButton.className = "reward-option";
+  engageButton.innerHTML = `
+    <div class="reward-name">Engage Current Node</div>
+    <div class="reward-meta">${formatNodeLabel(currentNode)}${formatNodeStatus(currentNode)}</div>
+  `;
+  engageButton.addEventListener("click", () => resolveCurrentNode());
+  els.mapActionArea.appendChild(engageButton);
+
+  const nodeEls = els.mapSvgWrap.querySelectorAll(".star-node");
+  nodeEls.forEach(nodeEl => {
+    const nodeId = nodeEl.getAttribute("data-node-id");
+    if (!nodeId) return;
+
+    if (nodeId === state.currentNodeId) {
+      nodeEl.addEventListener("click", () => resolveCurrentNode());
+      return;
+    }
+
+    const current = getCurrentNode();
+    if (current && current.neighbors.includes(nodeId)) {
+      nodeEl.addEventListener("click", () => travelToNode(nodeId));
+    }
+  });
+}
+
 function travelToNode(targetNodeId) {
   const currentNode = getCurrentNode();
   if (!currentNode) return;
@@ -1379,6 +1607,12 @@ function travelToNode(targetNodeId) {
 function resolveCurrentNode() {
   const node = getCurrentNode();
   if (!node) return;
+
+  if (node.type === "start") {
+    log("Hangar ready. Choose your route.", "system");
+    returnToMap();
+    return;
+  }
 
   if (node.type === "combat" || node.type === "elite") {
     if (isCurrentNodeCleared()) {
@@ -1429,6 +1663,26 @@ function resolveCurrentNode() {
     return;
   }
 
+  if (node.type === "distress") {
+    if (isCurrentNodeCleared()) {
+      log(`Distress node ${node.id} already resolved.`, "system");
+      returnToMap();
+      return;
+    }
+
+    state.currentScreen = "combat";
+    hideOverlay();
+    showDistressOverlay();
+    return;
+  }
+
+  if (node.type === "black-market") {
+    state.currentScreen = "combat";
+    hideOverlay();
+    showBlackMarketOverlay();
+    return;
+  }
+
   if (node.type === "gate") {
     state.currentScreen = "combat";
     hideOverlay();
@@ -1441,6 +1695,7 @@ function returnToMap() {
   state.currentScreen = "map";
   state.pendingReward = false;
   state.pendingExtraction = false;
+  state.shopInventory = [];
   hideOverlay();
   render();
 }
@@ -1524,7 +1779,11 @@ function showShopOverlay() {
   els.rewardOptions.classList.remove("hidden");
   els.overlay.classList.remove("hidden");
 
-  const shopCards = pickRandomCards(REWARD_POOL_IDS, 3);
+  if (!state.shopInventory || state.shopInventory.length === 0) {
+    state.shopInventory = pickRandomCards(REWARD_POOL_IDS, 3);
+  }
+
+  const shopCards = state.shopInventory;
 
   shopCards.forEach(cardId => {
     const card = getCardById(cardId);
@@ -1553,6 +1812,30 @@ function showShopOverlay() {
 
     els.rewardOptions.appendChild(btn);
   });
+
+  const rerollBtn = document.createElement("button");
+  rerollBtn.className = "reward-option";
+
+  rerollBtn.innerHTML = `
+  <div class="reward-name">Reroll Inventory</div>
+  <div class="reward-meta">Cost: 15 credits</div>
+`;
+
+  rerollBtn.addEventListener("click", () => {
+    if (state.runCredits < 15) {
+      log("Not enough credits.", "enemy");
+      return;
+    }
+
+    state.runCredits -= 15;
+    state.shopInventory = pickRandomCards(REWARD_POOL_IDS, 3);
+
+    log("Babu refreshes the inventory.", "system");
+
+    showShopOverlay();
+  });
+
+  els.rewardOptions.appendChild(rerollBtn);
 
   const removeBtn = document.createElement("button");
   removeBtn.className = "reward-option";
@@ -1633,12 +1916,184 @@ function showRemoveCardOverlay() {
   render();
 }
 
+function showDistressOverlay() {
+  clearNonCombatPresentation();
+  state.pendingReward = true;
+
+  els.overlayTitle.textContent = "Distress Signal";
+  els.overlayText.textContent = "A broken transmission cuts through the void. It could be salvage — or bait.";
+
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  const investigateBtn = document.createElement("button");
+  investigateBtn.className = "reward-option";
+  investigateBtn.innerHTML = `
+    <div class="reward-name">Investigate</div>
+    <div class="reward-meta">Resolve the signal and consume this node.</div>
+  `;
+  investigateBtn.addEventListener("click", () => {
+    const roll = Math.random();
+
+    if (roll < 0.45) {
+      state.runCredits += 20;
+      log("Distress signal yields salvage: +20 credits.", "system");
+      finishNodeAfterNonCombat();
+      return;
+    }
+
+    if (roll < 0.75) {
+      state.player.fuel = Math.min(state.player.maxFuel, state.player.fuel + 1);
+      log(`Distress signal yields emergency fuel. Fuel: ${state.player.fuel}.`, "system");
+      finishNodeAfterNonCombat();
+      return;
+    }
+
+    log("Distress signal was a trap.", "enemy");
+    state.pendingPlanetAlienAmbush = true;
+    state.currentScreen = "combat";
+    hideOverlay();
+    beginEncounter();
+  });
+
+  const ignoreBtn = document.createElement("button");
+  ignoreBtn.className = "reward-option";
+  ignoreBtn.innerHTML = `
+    <div class="reward-name">Ignore</div>
+    <div class="reward-meta">Return to the map without consuming this node.</div>
+  `;
+  ignoreBtn.addEventListener("click", () => returnToMap());
+
+  els.rewardOptions.appendChild(investigateBtn);
+  els.rewardOptions.appendChild(ignoreBtn);
+
+  render();
+}
+
+function showBlackMarketOverlay() {
+  clearNonCombatPresentation();
+  state.pendingReward = true;
+
+  els.overlayTitle.textContent = "Black Market";
+  els.overlayText.textContent = "Shuttered cargo bays, unregistered tech, and prices Babu would call irresponsible.";
+
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  const marketCards = pickRandomCards(REWARD_POOL_IDS, 3);
+
+  marketCards.forEach(cardId => {
+    const card = getCardById(cardId);
+    if (!card) return;
+
+    const btn = document.createElement("button");
+    btn.className = "reward-option";
+    btn.innerHTML = `
+      <div class="reward-name">${card.name}</div>
+      <div class="reward-meta">Buy for 20 credits • ${card.description}</div>
+    `;
+    btn.addEventListener("click", () => {
+      if (state.runCredits < 20) {
+        log("Not enough credits.", "enemy");
+        return;
+      }
+
+      state.runCredits -= 20;
+      state.runDeck.push(cardId);
+      log(`Bought ${card.name} on the black market.`, "system");
+      returnToMap();
+    });
+
+    els.rewardOptions.appendChild(btn);
+  });
+
+  const removeBtn = document.createElement("button");
+  removeBtn.className = "reward-option";
+  removeBtn.innerHTML = `
+    <div class="reward-name">Remove a Card</div>
+    <div class="reward-meta">Cost: 30 credits</div>
+  `;
+  removeBtn.addEventListener("click", () => {
+    if (state.runCredits < 30) {
+      log("Not enough credits.", "enemy");
+      return;
+    }
+
+    showBlackMarketRemoveOverlay();
+  });
+  els.rewardOptions.appendChild(removeBtn);
+
+  const leaveBtn = document.createElement("button");
+  leaveBtn.className = "reward-option";
+  leaveBtn.innerHTML = `
+    <div class="reward-name">Leave</div>
+    <div class="reward-meta">Return to map</div>
+  `;
+  leaveBtn.addEventListener("click", () => returnToMap());
+  els.rewardOptions.appendChild(leaveBtn);
+
+  render();
+}
+
+function showBlackMarketRemoveOverlay() {
+  clearNonCombatPresentation();
+  state.pendingReward = true;
+
+  els.overlayTitle.textContent = "Black Market Removal";
+  els.overlayText.textContent = "A backroom technician offers to strip one card from your deck.";
+
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  state.runDeck.forEach((cardId, index) => {
+    const card = getCardById(cardId);
+    if (!card) return;
+
+    const btn = document.createElement("button");
+    btn.className = "reward-option";
+    btn.innerHTML = `
+      <div class="reward-name">${card.name}</div>
+      <div class="reward-meta">Remove for 30 credits</div>
+    `;
+    btn.addEventListener("click", () => {
+      if (state.runCredits < 30) {
+        log("Not enough credits.", "enemy");
+        return;
+      }
+
+      state.runCredits -= 30;
+      state.runDeck.splice(index, 1);
+      log(`Removed ${card.name} through the black market.`, "system");
+      returnToMap();
+    });
+
+    els.rewardOptions.appendChild(btn);
+  });
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "reward-option";
+  cancelBtn.innerHTML = `
+    <div class="reward-name">Cancel</div>
+    <div class="reward-meta">Return to the black market</div>
+  `;
+  cancelBtn.addEventListener("click", () => showBlackMarketOverlay());
+  els.rewardOptions.appendChild(cancelBtn);
+
+  render();
+}
+
 function startNextSector() {
   state.sectorNumber += 1;
   state.gateUnlocked = false;
   state.mapNodes = createSectorByNumber(state.sectorNumber);
-  state.currentNodeId = "A";
-  state.visitedNodeIds = ["A"];
+  state.currentNodeId = "S";
+  state.visitedNodeIds = ["S"];
   state.clearedNodeIds = [];
   state.player.fuel = state.player.maxFuel;
   state.encounterIndex = 0;
@@ -1744,30 +2199,31 @@ function getNotorietyLabel(notoriety) {
 }
 
 function buildSectorBossEncounter(sectorNumber) {
+  let bossType = "blacksite-hunter";
+  if (sectorNumber === 1) bossType = "patrol-commander";
+  else if (sectorNumber === 2) bossType = "contract-warden";
+
   if (sectorNumber === 1) {
     const lead = getEnemyTypeById("burst-bounty") || ENEMY_TYPES[Math.min(3, ENEMY_TYPES.length - 1)];
     const escort = getEnemyTypeById("support-escort") || ENEMY_TYPES[0];
-    return [
-      buildEnemyFromTemplate(lead, "bounty", "hard"),
-      buildEnemyFromTemplate(escort, "escort", "hard")
-    ];
+    const bossEnemy = buildEnemyFromTemplate(lead, "bounty", "hard");
+    bossEnemy.bossType = bossType;
+    return [bossEnemy, buildEnemyFromTemplate(escort, "escort", "hard")];
   }
 
   if (sectorNumber === 2) {
     const lead = ENEMY_TYPES[Math.min(4, ENEMY_TYPES.length - 1)];
     const wing = getEnemyTypeById("burst-bounty") || lead;
-    return [
-      buildEnemyFromTemplate(lead, "bounty", "hard"),
-      buildEnemyFromTemplate(wing, "bounty", "hard")
-    ];
+    const bossEnemy = buildEnemyFromTemplate(lead, "bounty", "hard");
+    bossEnemy.bossType = bossType;
+    return [bossEnemy, buildEnemyFromTemplate(wing, "bounty", "hard")];
   }
 
   const tank = getEnemyTypeById("bulwark") || ENEMY_TYPES[Math.min(3, ENEMY_TYPES.length - 1)];
   const escort = getEnemyTypeById("support-escort") || ENEMY_TYPES[0];
-  return [
-    buildEnemyFromTemplate(tank, "bounty", "elite"),
-    buildEnemyFromTemplate(escort, "escort", "hard")
-  ];
+  const bossEnemy = buildEnemyFromTemplate(tank, "bounty", "elite");
+  bossEnemy.bossType = bossType;
+  return [bossEnemy, buildEnemyFromTemplate(escort, "escort", "hard")];
 }
 
 function showBossIntroOverlay() {
@@ -1822,10 +2278,10 @@ function showGateOverlay() {
   clearNonCombatPresentation();
   state.pendingReward = true;
 
-  els.overlayTitle.textContent = "Jump Gate";
+  els.overlayTitle.textContent = "Boss Contract";
   els.overlayText.textContent = state.gateUnlocked
-    ? `Sector gate is online. Advance to Sector ${state.sectorNumber + 1}?`
-    : "The gate is locked. Clear the elite node to unlock it.";
+    ? "High-value target located. Engage to complete the sector contract."
+    : "Contract locked. Eliminate the elite target to reveal the boss.";
   els.overlayBtn.classList.add("hidden");
   els.rewardOptions.innerHTML = "";
   els.rewardOptions.classList.remove("hidden");
@@ -1835,7 +2291,7 @@ function showGateOverlay() {
     const jumpBtn = document.createElement("button");
     jumpBtn.className = "reward-option";
     jumpBtn.innerHTML = `
-      <div class="reward-name">Face Sector Boss</div>
+      <div class="reward-name">Engage Boss Contract</div>
       <div class="reward-meta">Confront ${getSectorBossName(state.sectorNumber)} to unlock the next sector upgrade.</div>
     `;
     jumpBtn.addEventListener("click", () => {
@@ -2110,12 +2566,18 @@ function buildEnemyFromTemplate(template, role, tier) {
     uid: `${template.id}-${Math.random().toString(36).slice(2, 10)}`,
     id: template.id,
     name: template.name,
+    trait: template.trait || null,
     difficulty: tier,
     maxHull: scaledMaxHull,
     hull: scaledMaxHull,
     block: 0,
     markStacks: 0,
+    beamCharge: 0,
     role,
+    turnCounter: 0,
+    bossType: null,
+    spawnedEscort: false,
+    damageReduction: 0,
     attackReduction: 0,
     getIntent: scaledGetIntent,
     intent: scaledGetIntent(1)
@@ -2339,10 +2801,12 @@ function beginEncounter() {
   render();
 }
 
-function startRun() {
+function startRun(selectedShipId = "heavy-fighter") {
+  state.selectedShipId = selectedShipId;
+  const baseHull = getShipBaseHull(selectedShipId);
   state.player = {
-    maxHull: 50,
-    hull: 50,
+    maxHull: baseHull,
+    hull: baseHull,
     block: 0,
     baseEnergy: 3,
     energy: 3,
@@ -2353,8 +2817,8 @@ function startRun() {
     fuel: 100
   };
 
-  state.runDeck = makeRunDeck();
-  state.runCredits = 0;
+  state.runDeck = makeRunDeck(selectedShipId);
+  state.runCredits = getShipStartingCredits(selectedShipId);
   state.nextAttackBonus = 0;
   state.attacksPlayedThisTurn = 0;
   state.pendingExtraction = false;
@@ -2375,10 +2839,11 @@ function startRun() {
   hideComboBanner();
 
   state.mapNodes = createSectorByNumber(state.sectorNumber);
-  state.currentNodeId = "A";
-  state.visitedNodeIds = ["A"];
+  state.currentNodeId = "S";
+  state.visitedNodeIds = ["S"];
   state.clearedNodeIds = [];
   state.currentScreen = "map";
+  log(`Ship selected: ${getShipDisplayName(state.selectedShipId)}.`, "system");
 
   hideOverlay();
   render();
@@ -2417,6 +2882,14 @@ function dealAttackDamageToEnemy(baseAmount, sourceName) {
 function dealDamageToEnemy(amount, sourceName) {
   const enemy = getSelectedEnemy();
   if (!enemy) return;
+
+  if (enemy.trait === "overcharged") {
+    amount = Math.floor(amount * 1.5);
+    log(`${enemy.name} destabilizes under the hit.`, "system");
+  }
+  if (enemy.damageReduction) {
+    amount = Math.floor(amount * (1 - enemy.damageReduction));
+  }
 
   const blocked = Math.min(enemy.block, amount);
   const hpDamage = amount - blocked;
@@ -2557,6 +3030,16 @@ function resolveEnemyTurn() {
   if (state.combatEnded) return;
   const alive = getAliveEnemies();
   alive.forEach(enemy => {
+    enemy.turnCounter = (enemy.turnCounter || 0) + 1;
+    if (enemy.bossType) {
+      handleBossBehavior(enemy);
+    }
+
+    if (enemy.trait === "shielder" && enemy.hull > 0) {
+      enemy.block += 3;
+      log(`${enemy.name} fortifies for 3 block.`, "enemy");
+    }
+
     const intent = enemy.intent;
     if (!intent) return;
 
@@ -2568,6 +3051,10 @@ function resolveEnemyTurn() {
           log(`${enemy.name}'s attack reduced by ${reduction}.`, "system");
         }
         dealDamageToPlayer(finalAmount, enemy.name);
+        if (enemy.trait === "jammer" && finalAmount > 0) {
+          state.player.energy = Math.max(0, state.player.energy - 1);
+          log(`${enemy.name} jams your systems. Lose 1 energy.`, "enemy");
+        }
         break;
       }
 
@@ -2585,6 +3072,44 @@ function resolveEnemyTurn() {
       log(`Mark decays on ${enemy.name}.`, "enemy");
     }
   });
+}
+
+function handleBossBehavior(enemy) {
+  if (enemy.bossType === "patrol-commander") {
+    enemy.block += 4;
+
+    if (!enemy.spawnedEscort && enemy.hull < enemy.maxHull * 0.7) {
+      enemy.spawnedEscort = true;
+      spawnEscortEnemy();
+      log("Patrol Commander calls reinforcements!", "enemy");
+    }
+  }
+
+  if (enemy.bossType === "contract-warden") {
+    state.player.energy = Math.max(0, state.player.energy - 1);
+
+    if (enemy.turnCounter % 2 === 0) {
+      enemy.block += 8;
+    }
+  }
+
+  if (enemy.bossType === "blacksite-hunter") {
+    const target = typeof getPlayerTargetEnemy === "function" ? getPlayerTargetEnemy() || enemy : enemy;
+    target.markStacks = (target.markStacks || 0) + 2;
+
+    if (enemy.turnCounter % 3 === 0) {
+      enemy.damageReduction = 0.5;
+      log("Blacksite Hunter shifts phase.", "enemy");
+    } else {
+      enemy.damageReduction = 0;
+    }
+  }
+}
+
+function spawnEscortEnemy() {
+  const escortTemplate = getEnemyTypeById("support-escort") || ENEMY_TYPES[0];
+  const escort = buildEnemyFromTemplate(escortTemplate, "escort", "medium");
+  state.enemies.push(escort);
 }
 
 function endTurn() {
@@ -2750,15 +3275,27 @@ function renderHand() {
 let mapOverlayInProgress = false;
 
 function render() {
+  if (els.startScreen) {
+    els.startScreen.classList.toggle("hidden", state.currentScreen !== "start");
+  }
+  if (els.shipSelectScreen) {
+    els.shipSelectScreen.classList.toggle("hidden", state.currentScreen !== "ship-select");
+  }
+  if (els.mapScreen) {
+    els.mapScreen.classList.toggle("hidden", state.currentScreen !== "map");
+  }
+  const showCombatShell = state.currentScreen === "combat";
+  if (els.combatGrid) els.combatGrid.classList.toggle("hidden", !showCombatShell);
+  if (els.controls) els.controls.classList.toggle("hidden", !showCombatShell);
+  if (els.handSection) els.handSection.classList.toggle("hidden", !showCombatShell);
+  if (els.logSection) els.logSection.classList.toggle("hidden", !showCombatShell);
+
+  if (state.currentScreen === "start" || state.currentScreen === "ship-select") {
+    return;
+  }
+
   if (state.currentScreen === "map") {
-    if (!mapOverlayInProgress) {
-      mapOverlayInProgress = true;
-      try {
-        showMapOverlay();
-      } finally {
-        mapOverlayInProgress = false;
-      }
-    }
+    renderMapScreen();
     return;
   }
   els.playerHullText.textContent = `${state.player.hull} / ${state.player.maxHull}`;
@@ -2768,7 +3305,7 @@ function render() {
   els.playerWeaponsText.textContent = `+${state.player.weaponBonus}`;
   els.playerShieldsText.textContent = `+${state.player.shieldBonus}`;
   els.playerReactorText.textContent = `+${state.player.reactorBonus}`;
-  els.shipNameText.textContent = SHIP_NAME;
+  els.shipNameText.textContent = getShipDisplayName(state.selectedShipId);
   els.shipPassiveText.textContent = SHIP_PASSIVE_TEXT;
   els.creditsText.textContent = state.runCredits;
   if (els.fuelText) els.fuelText.textContent = state.player.fuel;
@@ -2794,5 +3331,10 @@ function render() {
 els.restartBtn.addEventListener("click", startRun);
 els.redrawBtn.addEventListener("click", redrawHand);
 els.endTurnBtn.addEventListener("click", endTurn);
+if (els.startRunFlowBtn) {
+  els.startRunFlowBtn.addEventListener("click", () => {
+    showShipSelection();
+  });
+}
 
-startRun();
+showStartScreen();

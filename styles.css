@@ -81,6 +81,23 @@ button.primary {
   gap: 24px;
 }
 
+.map-screen {
+  margin-top: 24px;
+}
+
+.map-svg-wrap {
+  margin-top: 16px;
+  border: 1px solid #375a8c;
+  border-radius: 16px;
+  background: rgba(4, 10, 22, 0.75);
+  padding: 16px;
+  overflow: hidden;
+}
+
+.map-screen .reward-option {
+  margin-top: 14px;
+}
+
 .panel {
   border: 1px solid #2f4d7a;
   padding: 22px;
@@ -130,6 +147,29 @@ button.primary {
   color: #ffd36a;
   border: 1px solid rgba(255, 211, 106, 0.45);
   background: rgba(255, 211, 106, 0.12);
+}
+
+.trait-badge {
+  font-size: 0.75rem;
+  letter-spacing: 0.03em;
+}
+
+.trait-shielder {
+  color: #74ffd3;
+  border: 1px solid rgba(116, 255, 211, 0.35);
+  background: rgba(116, 255, 211, 0.12);
+}
+
+.trait-jammer {
+  color: #c9b3ff;
+  border: 1px solid rgba(201, 179, 255, 0.35);
+  background: rgba(201, 179, 255, 0.12);
+}
+
+.trait-overcharged {
+  color: #ff9c73;
+  border: 1px solid rgba(255, 156, 115, 0.35);
+  background: rgba(255, 156, 115, 0.12);
 }
 
 .stats-grid {
