@@ -47,6 +47,10 @@
       <div id="mapActionArea" class="reward-options"></div>
     </section>
 
+    <section class="player-hud-section">
+      <div id="playerHud" class="player-hud"></div>
+    </section>
+
     <section class="combat-grid">
       <div class="panel player-panel">
         <div class="panel-head">
@@ -125,14 +129,17 @@
         </div>
       </div>
 
-      <div class="panel enemy-panel">
-        <div class="panel-head">
-          <h2>Enemies</h2>
-          <div id="encounterInfo" class="value">1 / 3</div>
-        </div>
+    </section>
 
-        <div id="enemies" class="enemies"></div>
+    <section class="combat-header-section">
+      <div class="combat-header">
+        <div class="label">Encounter</div>
+        <div id="encounterInfo" class="value">1 / 3</div>
       </div>
+    </section>
+
+    <section class="battlefield-section">
+      <div id="battlefield" class="battlefield"></div>
     </section>
 
     <section class="controls">
@@ -162,6 +169,10 @@
       </div>
     </div>
   </div>
+
+  <audio id="startMusic" loop>
+    <source src="./assets/audio/start_theme.m4a" type="audio/mp4">
+  </audio>
 
   <script src="game.js"></script>
 </body>

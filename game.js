@@ -321,21 +321,15 @@ function renderStarMapSvg() {
       const isAdjacentEdge =
         node.id === state.currentNodeId ||
         neighborId === state.currentNodeId;
-
-      const stroke = isAdjacentEdge
-        ? "rgba(140, 200, 255, 0.9)"
-        : "rgba(140, 180, 255, 0.22)";
-
-      const strokeWidth = isAdjacentEdge ? 5 : 3;
+      const edgeClass = isAdjacentEdge ? "map-edge map-edge-adjacent" : "map-edge map-edge-background";
 
       lineParts.push(`
         <line
+          class="${edgeClass}"
           x1="${node.x}"
           y1="${node.y}"
           x2="${neighbor.x}"
           y2="${neighbor.y}"
-          stroke="${stroke}"
-          stroke-width="${strokeWidth}"
         />
       `);
     }
@@ -360,31 +354,64 @@ function renderStarMapSvg() {
       else fill = "#2f4d7a";
     }
 
-    let stroke = "rgba(255,255,255,0.18)";
+    let stroke = "rgba(255,255,255,0.16)";
     let strokeWidth = 2;
     let opacity = 1;
     let cursor = "default";
-    const radius = node.type === "start" ? 28 : 24;
+    let radius = 23;
+    const isInteractive = isCurrent || isAdjacent;
+    const classParts = ["star-node"];
+    const isImportant = node.type === "start" || node.type === "elite" || node.type === "gate";
+    if (node.type === "start") radius = 29;
+    if (node.type === "elite") radius = 27;
+    if (node.type === "gate") radius = 31;
 
     if (isVisited) stroke = "rgba(121,188,255,0.65)";
     if (isCleared) opacity = 0.55;
+    if (!isInteractive) opacity = Math.min(opacity, 0.58);
     if (node.type === "start") {
       stroke = "rgba(255, 230, 170, 0.95)";
       strokeWidth = 3;
     }
     if (isCurrent) {
-      stroke = "#ffd36a";
-      strokeWidth = 4;
+      stroke = "#ffe08a";
+      strokeWidth = 5;
       cursor = "pointer";
     } else if (isAdjacent) {
-      stroke = "#79bcff";
-      strokeWidth = 3;
+      stroke = "#8fceff";
+      strokeWidth = 3.8;
       cursor = "pointer";
     }
+    if (isCurrent) classParts.push("is-current");
+    if (isAdjacent && !isCurrent) classParts.push("is-adjacent");
+    if (isVisited) classParts.push("is-visited");
+    if (isCleared) classParts.push("is-cleared");
+    if (isInteractive) classParts.push("is-interactive");
+    if (node.type === "start") classParts.push("is-start");
+    if (node.type === "elite") classParts.push("is-elite");
+    if (node.type === "gate") classParts.push("is-gate");
+    if (node.type === "shop") classParts.push("is-shop");
+    if (node.type === "dock") classParts.push("is-dock");
 
     nodeParts.push(`
-      <g class="star-node" data-node-id="${node.id}" style="cursor:${cursor}; opacity:${opacity}">
+      <g class="${classParts.join(" ")}" data-node-id="${node.id}" data-node-type="${node.type}" data-interactive="${isInteractive ? "true" : "false"}" style="cursor:${cursor}; opacity:${opacity}">
+        ${
+          node.type === "gate"
+            ? `<circle class="boss-node-glow" cx="${node.x}" cy="${node.y}" r="${radius + 10}" fill="none" stroke="${state.gateUnlocked ? "rgba(255, 220, 120, 0.72)" : "rgba(220, 230, 250, 0.3)"}" stroke-width="2.4" />`
+            : ""
+        }
+        ${
+          node.type === "start"
+            ? `<circle cx="${node.x}" cy="${node.y}" r="${radius + 6}" fill="none" stroke="rgba(255, 225, 155, 0.5)" stroke-width="2.2" />`
+            : ""
+        }
+        ${
+          node.type === "elite"
+            ? `<circle cx="${node.x}" cy="${node.y}" r="${radius + 5}" fill="none" stroke="rgba(255, 105, 105, 0.5)" stroke-width="2" />`
+            : ""
+        }
         <circle
+          class="star-node-core"
           cx="${node.x}"
           cy="${node.y}"
           r="${radius}"
@@ -392,11 +419,8 @@ function renderStarMapSvg() {
           stroke="${stroke}"
           stroke-width="${strokeWidth}"
         />
-        <text x="${node.x}" y="${node.y + 5}" text-anchor="middle" font-size="18" font-weight="800" fill="#e6f0ff">
+        <text class="star-node-symbol" x="${node.x}" y="${node.y + 6}" text-anchor="middle" font-size="18" font-weight="800" fill="#e6f0ff">
           ${getNodeSymbol(node)}
-        </text>
-        <text x="${node.x}" y="${node.y + 40}" text-anchor="middle" font-size="9" fill="rgba(230, 240, 255, 0.55)">
-          ${node.id}
         </text>
       </g>
     `);
@@ -1195,6 +1219,11 @@ const els = {
   mapCurrentInfo: document.getElementById("mapCurrentInfo"),
   mapSvgWrap: document.getElementById("mapSvgWrap"),
   mapActionArea: document.getElementById("mapActionArea"),
+  combatHeaderSection: document.querySelector(".combat-header-section"),
+  playerHudSection: document.querySelector(".player-hud-section"),
+  playerHud: document.getElementById("playerHud"),
+  battlefieldSection: document.querySelector(".battlefield-section"),
+  battlefield: document.getElementById("battlefield"),
   combatGrid: document.querySelector(".combat-grid"),
   controls: document.querySelector(".controls"),
   handSection: document.querySelector(".hand-section"),
@@ -1351,6 +1380,96 @@ function renderEnemies() {
 
     els.enemies.appendChild(card);
   });
+}
+
+function renderBattlefield() {
+  if (!els.battlefield || !state.player) return;
+
+  const playerHullPct = state.player.maxHull > 0
+    ? Math.max(0, Math.min(100, (state.player.hull / state.player.maxHull) * 100))
+    : 0;
+  const playerEnergyMax = state.player.baseEnergy + state.player.reactorBonus;
+
+  const playerBlockHtml = state.player.block > 0
+    ? `<div class="unit-block">🛡 ${state.player.block}</div>`
+    : "";
+
+  const enemiesHtml = state.enemies
+    .map(enemy => {
+      const enemyHullPct = enemy.maxHull > 0
+        ? Math.max(0, Math.min(100, (enemy.hull / enemy.maxHull) * 100))
+        : 0;
+      const isSelected = enemy.uid === state.selectedEnemyUid;
+      const destroyedClass = enemy.hull <= 0 ? " destroyed" : "";
+      const selectedClass = isSelected ? " selected" : "";
+      const intentText =
+        !state.combatEnded && enemy.hull > 0 && enemy.intent
+          ? enemy.intent.text
+          : enemy.hull > 0
+          ? "—"
+          : "Destroyed";
+      const enemyBlockHtml = enemy.block > 0 ? `<div class="unit-block">🛡 ${enemy.block}</div>` : "";
+      const markHtml = (enemy.markStacks || 0) > 0 ? `<div class="unit-mini-badge mark">MARK ${enemy.markStacks}</div>` : "";
+      const beamHtml = (enemy.beamCharge || 0) > 0 ? `<div class="unit-mini-badge beam">BEAM ${enemy.beamCharge}</div>` : "";
+      const traitHtml = enemy.trait ? `<div class="unit-mini-badge trait">${enemy.trait.toUpperCase()}</div>` : "";
+      const roleHtml = enemy.role === "bounty" ? `<div class="unit-mini-badge role">BOUNTY</div>` : `<div class="unit-mini-badge role escort">ESCORT</div>`;
+      const eliteHtml = enemy.difficulty === "elite" ? `<div class="unit-mini-badge elite">ELITE</div>` : "";
+      const bossHtml = enemy.bossType ? `<div class="unit-mini-badge boss">BOSS</div>` : "";
+
+      return `
+        <div class="enemy-unit${selectedClass}${destroyedClass}">
+          <div class="enemy-intent-badge">${intentText}</div>
+          <div class="enemy-meta-badges">
+            ${bossHtml}
+            ${eliteHtml}
+            ${roleHtml}
+            ${traitHtml}
+            ${markHtml}
+            ${beamHtml}
+          </div>
+          <div class="enemy-silhouette">${getNodeSymbol({ type: "combat" })}</div>
+          <div class="enemy-name">${enemy.name}</div>
+          <div class="unit-hull">
+            <div class="bar">
+              <div class="bar-fill enemy-fill" style="width: ${enemyHullPct}%"></div>
+            </div>
+            <div class="unit-hull-text">${enemy.hull} / ${enemy.maxHull}</div>
+          </div>
+          ${enemyBlockHtml}
+          ${isSelected ? `<div class="unit-targeted">TARGETED</div>` : ""}
+        </div>
+      `;
+    })
+    .join("");
+
+  els.battlefield.innerHTML = `
+    <div class="player-unit">
+      <div class="player-ship-name">${getShipDisplayName(state.selectedShipId)}</div>
+      <div class="player-energy">⚡ ${state.player.energy} / ${playerEnergyMax}</div>
+      <img src="./assets/images/player_ship.png" class="ship-img" />
+      <div class="unit-hull">
+        <div class="bar">
+          <div class="bar-fill player-fill" style="width: ${playerHullPct}%"></div>
+        </div>
+        <div class="unit-hull-text">${state.player.hull} / ${state.player.maxHull}</div>
+      </div>
+      ${playerBlockHtml}
+    </div>
+    <div class="enemy-units-wrap">
+      ${enemiesHtml}
+    </div>
+  `;
+}
+
+function renderPlayerHud() {
+  if (!els.playerHud || !state.player) return;
+
+  els.playerHud.innerHTML = `
+    <div class="hud-pill hud-resource">Fuel ${state.player.fuel}</div>
+    <div class="hud-pill hud-resource">Draw ${state.drawPile.length}</div>
+    <div class="hud-pill hud-resource">Discard ${state.discardPile.length}</div>
+    <div class="hud-pill hud-resource">Exhaust ${state.exhaustPile.length}</div>
+  `;
 }
 
 function makeCard(id) {
@@ -1519,7 +1638,7 @@ function showMapOverlay() {
 `;
 
   const engageButton = document.createElement("button");
-  engageButton.className = "reward-option";
+  engageButton.className = "reward-option map-engage-cta";
   engageButton.innerHTML = `
   <div class="reward-name">Engage Current Node</div>
   <div class="reward-meta">${formatNodeLabel(currentNode)}${formatNodeStatus(currentNode)}</div>
@@ -1579,7 +1698,7 @@ function renderMapScreen() {
   els.mapActionArea.appendChild(engageButton);
 
   const legendCard = document.createElement("div");
-  legendCard.className = "reward-option";
+  legendCard.className = "reward-option map-legend-card";
   legendCard.innerHTML = `
     <div class="reward-name">Legend</div>
     <div class="reward-meta">⌂ Hangar • ● Combat • ⬢ Dock • ◉ Planet • $ Shop • ✦ Black Market • ! Distress • ☠ Elite • ★ Boss Contract</div>
@@ -3295,6 +3414,7 @@ function renderHand() {
 }
 
 let mapOverlayInProgress = false;
+let lastRenderedScreen = null;
 
 function updateBackground() {
   if (state.currentScreen === "combat") {
@@ -3312,6 +3432,10 @@ function updateBackground() {
 
 function render() {
   updateBackground();
+  if (lastRenderedScreen !== state.currentScreen) {
+    window.scrollTo({ top: 0, behavior: "auto" });
+    lastRenderedScreen = state.currentScreen;
+  }
   if (els.startScreen) {
     els.startScreen.classList.toggle("hidden", state.currentScreen !== "start");
   }
@@ -3322,7 +3446,10 @@ function render() {
     els.mapScreen.classList.toggle("hidden", state.currentScreen !== "map");
   }
   const showCombatShell = state.currentScreen === "combat";
+  if (els.combatHeaderSection) els.combatHeaderSection.classList.toggle("hidden", !showCombatShell);
+  if (els.playerHudSection) els.playerHudSection.classList.toggle("hidden", !showCombatShell);
   if (els.combatGrid) els.combatGrid.classList.toggle("hidden", !showCombatShell);
+  if (els.battlefieldSection) els.battlefieldSection.classList.toggle("hidden", !showCombatShell);
   if (els.controls) els.controls.classList.toggle("hidden", !showCombatShell);
   if (els.handSection) els.handSection.classList.toggle("hidden", !showCombatShell);
   if (els.logSection) els.logSection.classList.toggle("hidden", !showCombatShell);
@@ -3357,12 +3484,30 @@ function render() {
     els.encounterInfo.textContent = `${state.encounterIndex + 1} / ${RUN_LENGTH} • ${state.encounterTier.toUpperCase()} • Enemies ${aliveCount} / ${totalCount}`;
   }
 
+  renderPlayerHud();
+  renderBattlefield();
   renderEnemies();
 
   els.endTurnBtn.disabled = state.combatEnded;
   els.redrawBtn.disabled = state.combatEnded;
 
   renderHand();
+}
+
+function initStartMusic() {
+  const music = document.getElementById("startMusic");
+  if (!music) return;
+
+  const startAudio = () => {
+    music.volume = 0.5;
+    music.play().catch(() => {});
+
+    document.removeEventListener("click", startAudio);
+    document.removeEventListener("keydown", startAudio);
+  };
+
+  document.addEventListener("click", startAudio);
+  document.addEventListener("keydown", startAudio);
 }
 
 els.restartBtn.addEventListener("click", startRun);
@@ -3374,4 +3519,5 @@ if (els.startRunFlowBtn) {
   });
 }
 
+initStartMusic();
 showStartScreen();
