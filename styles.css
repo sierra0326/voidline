@@ -4,15 +4,27 @@
 
 body {
   margin: 0;
-  background: radial-gradient(circle at top, #0e1a2f, #050912);
+  background: url("./assets/images/plain_starfield.png") no-repeat center center fixed;
+  background-size: cover;
   color: #e6f0ff;
   font-family: Arial, sans-serif;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  pointer-events: none;
+  z-index: 0;
 }
 
 .container {
   max-width: 1200px;
   margin: auto;
   padding: 28px 20px 40px;
+  position: relative;
+  z-index: 1;
 }
 
 .header {
@@ -49,6 +61,111 @@ body {
 .combo-banner.fade-out {
   opacity: 0;
   transform: translateY(-8px);
+}
+
+#startScreen.start-screen {
+  position: relative;
+  min-height: 78vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.start-screen-bg {
+  position: absolute;
+  inset: 0;
+  background: url("./assets/images/start_background.gif") no-repeat center center;
+  background-size: cover;
+  z-index: 0;
+}
+
+.start-screen-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.start-screen::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 280px;
+  height: 120px;
+  background: linear-gradient(to top right, rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0));
+  z-index: 1;
+  pointer-events: none;
+}
+
+.start-screen-content {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+
+.start-overlay {
+  width: min(520px, 92vw);
+  text-align: center;
+  padding: 40px 36px;
+  border-radius: 24px;
+  background: rgba(10, 20, 40, 0.72);
+  border: 1px solid rgba(121, 188, 255, 0.25);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+}
+
+.start-title,
+.start-subtitle,
+#startRunFlowBtn {
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.start-title {
+  margin: 0 0 12px;
+  font-size: clamp(2.5rem, 5vw, 4rem);
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  color: #e6f0ff;
+  animation: fadeRise 0.75s ease-out forwards;
+}
+
+.start-subtitle {
+  margin: 0 0 28px;
+  color: #9fb3cf;
+  font-size: 1.05rem;
+  animation: fadeRise 0.75s ease-out 0.18s forwards;
+}
+
+#startRunFlowBtn {
+  min-width: 180px;
+  animation: fadeRise 0.75s ease-out 0.36s forwards;
+}
+
+#startRunFlowBtn:hover {
+  transform: scale(1.04);
+  transition: transform 0.15s ease;
+}
+
+@keyframes fadeRise {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 h1, h2, h3 {

@@ -287,6 +287,20 @@ function getSectorProgressText() {
   return `Visited ${visited} / ${total} • Cleared ${cleared} / ${total}`;
 }
 
+function getNodeSymbol(node) {
+  if (!node) return "?";
+  if (node.type === "start") return "⌂";
+  if (node.type === "combat") return "●";
+  if (node.type === "dock") return "⬢";
+  if (node.type === "planet") return "◉";
+  if (node.type === "shop") return "$";
+  if (node.type === "black-market") return "✦";
+  if (node.type === "distress") return "!";
+  if (node.type === "elite") return "☠";
+  if (node.type === "gate") return "★";
+  return "?";
+}
+
 function renderStarMapSvg() {
   const currentNode = getCurrentNode();
   if (!currentNode) return "";
@@ -310,7 +324,7 @@ function renderStarMapSvg() {
 
       const stroke = isAdjacentEdge
         ? "rgba(140, 200, 255, 0.9)"
-        : "rgba(140, 180, 255, 0.35)";
+        : "rgba(140, 180, 255, 0.22)";
 
       const strokeWidth = isAdjacentEdge ? 5 : 3;
 
@@ -333,13 +347,8 @@ function renderStarMapSvg() {
     const isCleared = isNodeCleared(node.id);
     const isAdjacent = currentNode.neighbors.includes(node.id);
 
-    const projectedFuel = Math.max(0, state.player.fuel - 1);
-    const fuelPreviewText =
-      isAdjacent && !isCurrent
-        ? `<text x="${node.x}" y="${node.y + 56}" text-anchor="middle" font-size="11" font-weight="700" fill="#79bcff">${projectedFuel} fuel</text>`
-        : "";
-
     let fill = "#1c2c4a";
+    if (node.type === "start") fill = "#ffd166";
     if (node.type === "dock") fill = "#1f6b62";
     if (node.type === "planet") fill = "#5b4b8a";
     if (node.type === "elite") fill = "#8a2f2f";
@@ -355,9 +364,14 @@ function renderStarMapSvg() {
     let strokeWidth = 2;
     let opacity = 1;
     let cursor = "default";
+    const radius = node.type === "start" ? 28 : 24;
 
     if (isVisited) stroke = "rgba(121,188,255,0.65)";
     if (isCleared) opacity = 0.55;
+    if (node.type === "start") {
+      stroke = "rgba(255, 230, 170, 0.95)";
+      strokeWidth = 3;
+    }
     if (isCurrent) {
       stroke = "#ffd36a";
       strokeWidth = 4;
@@ -373,18 +387,17 @@ function renderStarMapSvg() {
         <circle
           cx="${node.x}"
           cy="${node.y}"
-          r="24"
+          r="${radius}"
           fill="${fill}"
           stroke="${stroke}"
           stroke-width="${strokeWidth}"
         />
-        <text x="${node.x}" y="${node.y + 5}" text-anchor="middle" font-size="14" font-weight="700" fill="#e6f0ff">
+        <text x="${node.x}" y="${node.y + 5}" text-anchor="middle" font-size="18" font-weight="800" fill="#e6f0ff">
+          ${getNodeSymbol(node)}
+        </text>
+        <text x="${node.x}" y="${node.y + 40}" text-anchor="middle" font-size="9" fill="rgba(230, 240, 255, 0.55)">
           ${node.id}
         </text>
-        <text x="${node.x}" y="${node.y + 42}" text-anchor="middle" font-size="11" fill="#9fb3cf">
-          ${formatNodeLabel(node)}
-        </text>
-        ${fuelPreviewText}
       </g>
     `);
   }
@@ -1565,6 +1578,14 @@ function renderMapScreen() {
   engageButton.addEventListener("click", () => resolveCurrentNode());
   els.mapActionArea.appendChild(engageButton);
 
+  const legendCard = document.createElement("div");
+  legendCard.className = "reward-option";
+  legendCard.innerHTML = `
+    <div class="reward-name">Legend</div>
+    <div class="reward-meta">⌂ Hangar • ● Combat • ⬢ Dock • ◉ Planet • $ Shop • ✦ Black Market • ! Distress • ☠ Elite • ★ Boss Contract</div>
+  `;
+  els.mapActionArea.appendChild(legendCard);
+
   const nodeEls = els.mapSvgWrap.querySelectorAll(".star-node");
   nodeEls.forEach(nodeEl => {
     const nodeId = nodeEl.getAttribute("data-node-id");
@@ -2230,6 +2251,7 @@ function showBossIntroOverlay() {
   const bossName = getSectorBossName(state.sectorNumber);
   const bossDescription = getSectorBossDescription(state.sectorNumber);
 
+  document.body.style.backgroundImage = "url('./assets/images/boss_planet.png')";
   hideComboBanner();
   clearNonCombatPresentation();
   state.pendingReward = true;
@@ -3274,7 +3296,22 @@ function renderHand() {
 
 let mapOverlayInProgress = false;
 
+function updateBackground() {
+  if (state.currentScreen === "combat") {
+    if (state.inBossCombat || state.pendingBoss) {
+      document.body.style.backgroundImage = "url('./assets/images/boss_planet.png')";
+    } else {
+      document.body.style.backgroundImage = "url('./assets/images/blue_nebula.png')";
+    }
+  } else if (state.currentScreen === "map") {
+    document.body.style.backgroundImage = "url('./assets/images/plain_starfield.png')";
+  } else {
+    document.body.style.backgroundImage = "url('./assets/images/plain_starfield.png')";
+  }
+}
+
 function render() {
+  updateBackground();
   if (els.startScreen) {
     els.startScreen.classList.toggle("hidden", state.currentScreen !== "start");
   }
