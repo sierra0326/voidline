@@ -33,11 +33,39 @@ const state = {
   currentScreen: "start",
   sectorNumber: 1,
   notoriety: 0,
+  bossCount: 0,
+  endlessMode: false,
   gateUnlocked: false,
   inBossCombat: false,
   pendingBoss: false,
   shopInventory: [],
-  selectedShipId: "heavy-fighter"
+  selectedShipId: "heavy-fighter",
+  lastCombatCreditsEarned: 0,
+  run: {
+    archetypeBias: {
+      beam: 0,
+      burn: 0,
+      snub: 0,
+      block: 0,
+      mark: 0,
+      economy: 0,
+      drone: 0,
+      overheat: 0
+    },
+    archetypeCounts: {
+      beam: 0,
+      burn: 0,
+      snub: 0,
+      block: 0,
+      mark: 0,
+      economy: 0,
+      drone: 0,
+      overheat: 0
+    },
+    committedArchetype: null,
+    encounterCount: 0,
+    miniComboSynergyShown: false
+  }
 };
 
 const SHIP_NAME = "Bounty Hunter";
@@ -91,36 +119,45 @@ function getShipStartingCredits(shipId) {
 }
 
 function getShipStartingDeckIds(shipId) {
-  const base = [
-    "pulse-shot",
-    "pulse-shot",
-    "brace",
-    "brace",
-    "missile",
-    "missile"
+  const baseCore = [
+    "basic-attack",
+    "basic-attack",
+    "basic-attack",
+    "basic-attack",
+    "basic-attack",
+    "basic-block",
+    "basic-block",
+    "basic-block",
+    "basic-block",
+    "basic-block"
   ];
 
   if (shipId === "heavy-fighter") {
-    return [...base, "charge-beam", "laser-pulse", "full-beam"];
-  }
-
-  if (shipId === "exploration-vessel") {
-    return [...base, "tactical-scan", "reroute-power", "evasive-burst"];
-  }
-
-  if (shipId === "gunship") {
-    return [...base, "brace", "reinforce-shields", "collection-sweep"];
+    return [...baseCore, "charge-beam", "laser-pulse", "missile"];
   }
 
   if (shipId === "stealth-bomber") {
-    return [...base, "hunters-tag", "paint-the-target", "claim-shot"];
+    return [...baseCore, "hunters-tag", "paint-the-target", "missile"];
+  }
+
+  if (shipId === "gunship") {
+    return [...baseCore, "reinforce-shields", "shield-slam", "missile"];
+  }
+
+  if (shipId === "exploration-vessel") {
+    return [...baseCore, "snub-reinforce", "snub-strike", "missile"];
   }
 
   if (shipId === "mining-ship") {
-    return [...base, "pulse-shot", "collection-sweep", "overcharge-cannon"];
+    return [...baseCore, "laser-drill", "laser-alignment", "missile"];
   }
 
-  return [...STARTING_DECK_IDS];
+  return [...baseCore, "charge-beam", "laser-pulse", "missile"];
+}
+
+function getShipArchetypeCardIds(shipId) {
+  if (shipId === "mining-ship") return ["laser-drill", "laser-alignment"];
+  return [];
 }
 const BASE_CREDIT_REWARD = 10;
 const CREDIT_REWARD_STEP = 5;
@@ -273,6 +310,49 @@ function formatNodeStatus(node) {
   return tags.length ? ` • ${tags.join(" • ")}` : "";
 }
 
+function getMapNodeTooltip(node, currentNode) {
+  if (!node) return "Unknown node.";
+
+  let text = "Unknown node.";
+  if (node.type === "start") {
+    text = "Hangar. Starting point for this sector.";
+  } else if (node.type === "combat") {
+    const danger = (node.danger || "medium").toLowerCase();
+    const threat = danger.charAt(0).toUpperCase() + danger.slice(1);
+    text = `Combat. Standard encounter. Threat level: ${threat}.`;
+  } else if (node.type === "dock") {
+    text = "Dock. Repair and refuel opportunities.";
+  } else if (node.type === "planet") {
+    text = "Planet. Event node with possible risks or rewards.";
+  } else if (node.type === "shop") {
+    text = "Shop. Spend credits on cards, upgrades, or services.";
+  } else if (node.type === "elite") {
+    text = "Elite. Harder combat with better rewards.";
+  } else if (node.type === "gate") {
+    text = state.gateUnlocked
+      ? "Boss Contract. Major boss encounter with powerful rewards."
+      : "Boss Contract. Locked until the gate is opened.";
+  } else if (node.type === "distress") {
+    text = "Distress Signal. Unpredictable encounter with risk and reward.";
+  } else if (node.type === "black-market") {
+    text = "Black Market. Rare services or unusual offers.";
+  } else {
+    text = `${formatNodeLabel(node)} node.`;
+  }
+
+  const stateNotes = [];
+  if (node.id === state.currentNodeId) {
+    stateNotes.push("You are here.");
+  } else if (currentNode && currentNode.neighbors.includes(node.id)) {
+    stateNotes.push("Available to travel.");
+  }
+  if (isNodeVisited(node.id)) stateNotes.push("Previously visited.");
+  if (isNodeCleared(node.id)) stateNotes.push("Encounter already completed.");
+  if (node.type === "gate" && !state.gateUnlocked) stateNotes.push("Currently locked.");
+
+  return stateNotes.length ? `${text} ${stateNotes.join(" ")}` : text;
+}
+
 function markCurrentNodeCleared() {
   if (!state.currentNodeId) return;
   if (!state.clearedNodeIds.includes(state.currentNodeId)) {
@@ -393,8 +473,9 @@ function renderStarMapSvg() {
     if (node.type === "shop") classParts.push("is-shop");
     if (node.type === "dock") classParts.push("is-dock");
 
+    const tooltipText = getMapNodeTooltip(node, currentNode);
     nodeParts.push(`
-      <g class="${classParts.join(" ")}" data-node-id="${node.id}" data-node-type="${node.type}" data-interactive="${isInteractive ? "true" : "false"}" style="cursor:${cursor}; opacity:${opacity}">
+      <g class="${classParts.join(" ")}" data-node-id="${node.id}" data-node-type="${node.type}" data-tooltip="${tooltipText}" data-interactive="${isInteractive ? "true" : "false"}" style="cursor:${cursor}; opacity:${opacity}">
         ${
           node.type === "gate"
             ? `<circle class="boss-node-glow" cx="${node.x}" cy="${node.y}" r="${radius + 10}" fill="none" stroke="${state.gateUnlocked ? "rgba(255, 220, 120, 0.72)" : "rgba(220, 230, 250, 0.3)"}" stroke-width="2.4" />`
@@ -463,10 +544,31 @@ function pickRandom(array) {
 }
 
 function formatIntentText(type, amount) {
+  if (type === "disrupt") return "Will disrupt systems";
   return type === "attack" ? `Attack for ${amount}` : `Will gain ${amount} block`;
 }
 
 const SYSTEM_CARDS = [
+  {
+    id: "basic-attack",
+    name: "Basic Attack",
+    type: "system",
+    cost: 1,
+    description: "Deal 5 damage.",
+    effect() {
+      dealAttackDamageToEnemy(5, "Basic Attack");
+    }
+  },
+  {
+    id: "basic-block",
+    name: "Basic Block",
+    type: "system",
+    cost: 1,
+    description: "Gain 5 block.",
+    effect() {
+      gainPlayerBlock(5 + (state.player.shieldBonus || 0), "Basic Block");
+    }
+  },
   {
     id: "pulse-shot",
     name: "Pulse Shot",
@@ -508,6 +610,38 @@ const SYSTEM_CARDS = [
     }
   },
   {
+    id: "laser-drill",
+    name: "Laser Drill",
+    type: "system",
+    cost: 1,
+    description: "Deal 4 damage. Apply 2 Burn.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+
+      dealAttackDamageToEnemy(4, "Laser Drill");
+      enemy.burnStacks = (enemy.burnStacks || 0) + 2;
+
+      log("Laser Drill applies 2 Burn.", "system");
+    }
+  },
+  {
+    id: "laser-alignment",
+    name: "Laser Alignment",
+    type: "system",
+    cost: 1,
+    description: "Gain 2 Laser. Burn deals +1 damage this combat.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+
+      enemy.laserStacks = (enemy.laserStacks || 0) + 2;
+      state.player.burnBonus = (state.player.burnBonus || 0) + 1;
+
+      log("Laser Alignment improves burn output.", "system");
+    }
+  },
+  {
     id: "reinforce-shields",
     name: "Reinforce Shields",
     type: "system",
@@ -515,6 +649,16 @@ const SYSTEM_CARDS = [
     description: "Gain 4 block.",
     effect() {
       gainPlayerBlock(4 + state.player.shieldBonus, "Reinforce Shields");
+    }
+  },
+  {
+    id: "shield-slam",
+    name: "Shield Slam",
+    type: "system",
+    cost: 1,
+    description: "Deal damage equal to your Block.",
+    effect() {
+      dealAttackDamageToEnemy(state.player.block || 0, "Shield Slam");
     }
   },
   {
@@ -627,6 +771,32 @@ const SYSTEM_CARDS = [
       state.player.energy += 1;
       drawCards(1);
       log("Reroute Power grants 1 energy.", "system");
+    }
+  },
+  {
+    id: "snub-reinforce",
+    name: "Snub Reinforcement",
+    type: "system",
+    cost: 1,
+    description: "Snub gains +2 max HP and heals 2 this combat.",
+    effect() {
+      const snub = state.player?.snub;
+      if (!snub || !snub.alive) return;
+      snub.maxHull += 2;
+      snub.hull = Math.min(snub.maxHull, snub.hull + 2);
+      log("Snub Reinforcement upgrades the snub for this combat.", "system");
+    }
+  },
+  {
+    id: "snub-strike",
+    name: "Snub Strike",
+    type: "system",
+    cost: 1,
+    description: "Snub deals damage equal to current hull.",
+    effect() {
+      const snub = state.player?.snub;
+      if (!snub || !snub.alive) return;
+      dealAttackDamageToEnemy(snub.hull || 0, "Snub Strike");
     }
   },
   {
@@ -769,8 +939,7 @@ const SYSTEM_CARDS = [
       if (!enemy) return;
       const mark = enemy.markStacks || 0;
       const credits = 3 + mark * 2;
-      state.runCredits += credits;
-      log(`Bounty Collection pays out ${credits} credits.`, "system");
+      gainCredits(credits, "Bounty Collection");
       if (credits >= 9) showComboBanner("💰 BIG PAYOUT");
     }
   },
@@ -948,6 +1117,585 @@ const SYSTEM_CARDS = [
       log(`Recalibrate converts ${beam} Beam into Mark.`, "system");
       showComboBanner("⚡→🎯 RELOCK");
     }
+  },
+  {
+    id: "overdrive-cannon",
+    name: "Overdrive Cannon",
+    type: "system",
+    cost: 1,
+    description: "Deal 12 damage. Gain 2 Heat.",
+    effect() {
+      dealAttackDamageToEnemy(12, "Overdrive Cannon");
+      state.player.heat = (state.player.heat || 0) + 2;
+      log("Overdrive Cannon builds 2 Heat.", "system");
+    }
+  },
+  {
+    id: "vent-systems",
+    name: "Vent Systems",
+    type: "system",
+    cost: 1,
+    description: "Remove all Heat. Gain block equal to Heat removed.",
+    effect() {
+      const heat = state.player.heat || 0;
+      state.player.heat = 0;
+      gainPlayerBlock(heat + (state.player.shieldBonus || 0), "Vent Systems");
+      log(`Vent Systems purges ${heat} Heat.`, "system");
+    }
+  },
+  {
+    id: "cloak",
+    name: "Cloak",
+    type: "system",
+    cost: 1,
+    description: "Gain Stealth. Next attack deals double.",
+    effect() {
+      state.player.stealthReady = true;
+      log("Cloak engaged. Next attack is doubled.", "system");
+    }
+  },
+  {
+    id: "ambush-strike",
+    name: "Ambush Strike",
+    type: "system",
+    cost: 1,
+    description: "Deal 6 damage. Double if Stealth is active.",
+    effect() {
+      dealAttackDamageToEnemy(6, "Ambush Strike");
+    }
+  },
+  {
+    id: "fortify-hull",
+    name: "Fortify Hull",
+    type: "system",
+    cost: 1,
+    description: "Gain scaling block this turn.",
+    effect() {
+      const block = 3 + (state.turn || 1);
+      gainPlayerBlock(block + (state.player.shieldBonus || 0), "Fortify Hull");
+      log(`Fortify Hull gains ${block} block.`, "system");
+    }
+  },
+  {
+    id: "reinforced-plating",
+    name: "Reinforced Plating",
+    type: "system",
+    cost: 1,
+    description: "Reduce incoming damage by 1 this combat.",
+    effect() {
+      state.player.damageReductionFlat = (state.player.damageReductionFlat || 0) + 1;
+      log("Reinforced Plating improves damage resistance.", "system");
+    }
+  },
+  {
+    id: "deploy-drone",
+    name: "Deploy Drone",
+    type: "system",
+    cost: 1,
+    description: "Deploy a drone unit.",
+    effect() {
+      state.player.drones = (state.player.drones || 0) + 1;
+      log("Drone deployed.", "system");
+    }
+  },
+  {
+    id: "swarm-command",
+    name: "Swarm Command",
+    type: "system",
+    cost: 1,
+    description: "All drones deal damage.",
+    effect() {
+      const drones = state.player.drones || 0;
+      if (drones <= 0) return;
+      dealAttackDamageToEnemy(drones * 3, "Swarm Command");
+      log(`Swarm Command triggers ${drones} drones.`, "system");
+    }
+  },
+  {
+    id: "extract-resources",
+    name: "Extract Resources",
+    type: "system",
+    cost: 1,
+    description: "Gain 3 credits.",
+    effect() {
+      gainCredits(3, "Extract Resources");
+    }
+  },
+  {
+    id: "overclock-drill",
+    name: "Overclock Drill",
+    type: "system",
+    cost: 1,
+    description: "Spend 3 credits to gain 2 Laser.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      if (state.runCredits < 3) return;
+      state.runCredits -= 3;
+      if (state.player) state.player.credits = state.runCredits;
+      enemy.laserStacks = (enemy.laserStacks || 0) + 2;
+      log("Overclock Drill converts credits into Laser.", "system");
+    }
+  },
+  {
+    id: "overheat-cycle",
+    name: "Overheat Cycle",
+    type: "system",
+    cost: 1,
+    description: "Apply 2 Burn. Gain 1 Heat.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.burnStacks = (enemy.burnStacks || 0) + 2;
+      state.player.heat = (state.player.heat || 0) + 1;
+      log("Overheat Cycle builds Heat and Burn.", "system");
+    }
+  },
+  {
+    id: "industrial-beam",
+    name: "Industrial Beam",
+    type: "system",
+    cost: 2,
+    description: "Deal 5 damage. +2 per Burn.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      const burn = enemy.burnStacks || 0;
+      dealAttackDamageToEnemy(5 + burn * 2, "Industrial Beam");
+    }
+  },
+  {
+    id: "thermal-collapse",
+    name: "Thermal Collapse",
+    type: "system",
+    cost: 2,
+    description: "Consume Burn. Deal damage equal to Burn x3.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      const burn = enemy.burnStacks || 0;
+      if (burn <= 0) return;
+      enemy.burnStacks = 0;
+      dealAttackDamageToEnemy(burn * 3, "Thermal Collapse");
+    }
+  },
+  {
+    id: "snub-rebuild",
+    name: "Snub Rebuild",
+    type: "system",
+    cost: 1,
+    description: "Restore Snub to full and +1 max HP.",
+    effect() {
+      const snub = state.player?.snub;
+      if (!snub) return;
+      snub.maxHull += 1;
+      snub.alive = true;
+      snub.hull = snub.maxHull;
+      snub.respawnCounter = 0;
+      log("Snub Rebuild fully restores the snub.", "system");
+    }
+  },
+  {
+    id: "escort-protocol",
+    name: "Escort Protocol",
+    type: "system",
+    cost: 1,
+    description: "Snub gains +2 max HP and heals 2.",
+    effect() {
+      const snub = state.player?.snub;
+      if (!snub || !snub.alive) return;
+      snub.maxHull += 2;
+      snub.hull = Math.min(snub.maxHull, snub.hull + 2);
+      log("Escort Protocol reinforces the snub.", "system");
+    }
+  },
+  {
+    id: "snub-commander",
+    name: "Snub Commander",
+    type: "system",
+    cost: 2,
+    description: "Snub strikes for 2 + Snub max HP damage.",
+    effect() {
+      const snub = state.player?.snub;
+      if (!snub || !snub.alive) return;
+      dealAttackDamageToEnemy(2 + (snub.maxHull || 0), "Snub Commander");
+    }
+  },
+  {
+    id: "barricade-core",
+    name: "Barricade Core",
+    type: "system",
+    cost: 1,
+    description: "Gain 6 block. Block cards gain +1 this combat.",
+    effect() {
+      gainPlayerBlock(6 + (state.player.shieldBonus || 0), "Barricade Core");
+      state.player.shieldBonus = (state.player.shieldBonus || 0) + 1;
+      log("Barricade Core fortifies shield systems.", "system");
+    }
+  },
+  {
+    id: "shield-battery",
+    name: "Shield Battery",
+    type: "system",
+    cost: 1,
+    description: "Gain 10 block.",
+    effect() {
+      gainPlayerBlock(10 + (state.player.shieldBonus || 0), "Shield Battery");
+    }
+  },
+  {
+    id: "impact-conversion",
+    name: "Impact Conversion",
+    type: "system",
+    cost: 1,
+    description: "Deal damage equal to your Block.",
+    effect() {
+      dealAttackDamageToEnemy(state.player.block || 0, "Impact Conversion");
+    }
+  },
+  {
+    id: "assassination-protocol",
+    name: "Assassination Protocol",
+    type: "system",
+    cost: 1,
+    description: "Apply 3 Mark.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.markStacks = (enemy.markStacks || 0) + 3;
+      log("Assassination Protocol applies 3 Mark.", "system");
+    }
+  },
+  {
+    id: "precision-strike",
+    name: "Precision Strike",
+    type: "system",
+    cost: 2,
+    description: "Deal 6 damage. +2 per Mark.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      const mark = enemy.markStacks || 0;
+      dealAttackDamageToEnemy(6 + mark * 2, "Precision Strike");
+    }
+  },
+  {
+    id: "power-conduit",
+    name: "Power Conduit",
+    type: "system",
+    cost: 1,
+    description: "Charge +2 Beam.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.beamCharge = (enemy.beamCharge || 0) + 2;
+      log("Power Conduit increases Beam charge.", "system");
+    }
+  },
+  {
+    id: "beam-overload",
+    name: "Beam Overload",
+    type: "system",
+    cost: 1,
+    description: "Double Beam. Deal 2 damage.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.beamCharge = (enemy.beamCharge || 0) * 2;
+      dealAttackDamageToEnemy(2, "Beam Overload");
+    }
+  },
+  {
+    id: "focused-beam",
+    name: "Focused Beam",
+    type: "system",
+    cost: 2,
+    description: "Deal 8 damage. +3 per Beam. Consume all Beam.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      const beam = enemy.beamCharge || 0;
+      enemy.beamCharge = 0;
+      dealAttackDamageToEnemy(8 + beam * 3, "Focused Beam");
+    }
+  },
+  {
+    id: "launch-support",
+    name: "Launch Support",
+    type: "system",
+    cost: 1,
+    description: "Snub heals 2. Gain 4 block.",
+    effect() {
+      const snub = state.player?.snub;
+      if (!snub || !snub.alive) return;
+      snub.hull = Math.min(snub.maxHull || 5, (snub.hull || 0) + 2);
+      gainPlayerBlock(4 + (state.player.shieldBonus || 0), "Launch Support");
+      log("Launch Support stabilizes your snub.", "system");
+    }
+  },
+  {
+    id: "reinforced-frame",
+    name: "Reinforced Frame",
+    type: "system",
+    cost: 1,
+    description: "Snub gains +3 max HP and heals 1.",
+    effect() {
+      const snub = state.player?.snub;
+      if (!snub || !snub.alive) return;
+      snub.maxHull += 3;
+      snub.hull = Math.min(snub.maxHull, snub.hull + 1);
+      log("Reinforced Frame strengthens the snub.", "system");
+    }
+  },
+  {
+    id: "synchronized-assault",
+    name: "Synchronized Assault",
+    type: "system",
+    cost: 2,
+    description: "Snub deals double its current hull as damage.",
+    effect() {
+      const snub = state.player?.snub;
+      if (!snub || !snub.alive) return;
+      dealAttackDamageToEnemy((snub.hull || 0) * 2, "Synchronized Assault");
+    }
+  },
+  {
+    id: "deploy-swarm",
+    name: "Deploy Swarm",
+    type: "system",
+    cost: 1,
+    description: "Deploy 2 drones.",
+    effect() {
+      state.player.drones = (state.player.drones || 0) + 2;
+      log("Deploy Swarm launches 2 drones.", "system");
+    }
+  },
+  {
+    id: "drone-uplink",
+    name: "Drone Uplink",
+    type: "system",
+    cost: 1,
+    description: "Drone attacks gain +1 damage this combat.",
+    effect() {
+      state.player.droneDamageBonus = (state.player.droneDamageBonus || 0) + 1;
+      log("Drone Uplink boosts swarm damage.", "system");
+    }
+  },
+  {
+    id: "swarm-strike",
+    name: "Swarm Strike",
+    type: "system",
+    cost: 1,
+    description: "Deal damage per drone.",
+    effect() {
+      const drones = state.player.drones || 0;
+      if (drones <= 0) return;
+      const perDrone = 2 + (state.player.droneDamageBonus || 0);
+      dealAttackDamageToEnemy(drones * perDrone, "Swarm Strike");
+    }
+  },
+  {
+    id: "drone-shielding",
+    name: "Drone Shielding",
+    type: "system",
+    cost: 1,
+    description: "Gain 2 block per drone.",
+    effect() {
+      const drones = state.player.drones || 0;
+      const block = drones * 2;
+      if (block <= 0) return;
+      gainPlayerBlock(block + (state.player.shieldBonus || 0), "Drone Shielding");
+    }
+  },
+  {
+    id: "thermal-spread",
+    name: "Thermal Spread",
+    type: "system",
+    cost: 1,
+    description: "Apply 3 Burn to the selected target.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.burnStacks = (enemy.burnStacks || 0) + 3;
+      log("Thermal Spread applies 3 Burn.", "system");
+    }
+  },
+  {
+    id: "heat-shielding",
+    name: "Heat Shielding",
+    type: "system",
+    cost: 1,
+    description: "Gain block equal to target Burn.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      const burn = enemy.burnStacks || 0;
+      gainPlayerBlock(burn + (state.player.shieldBonus || 0), "Heat Shielding");
+    }
+  },
+  {
+    id: "smoldering-core",
+    name: "Smoldering Core",
+    type: "system",
+    cost: 1,
+    description: "Burn deals +2 damage this combat.",
+    effect() {
+      state.player.burnBonus = (state.player.burnBonus || 0) + 2;
+      log("Smoldering Core amplifies burn output.", "system");
+    }
+  },
+  {
+    id: "salvage-run",
+    name: "Salvage Run",
+    type: "system",
+    cost: 1,
+    description: "Gain 5 credits.",
+    effect() {
+      gainCredits(5, "Salvage Run");
+    }
+  },
+  {
+    id: "liquidate-assets",
+    name: "Liquidate Assets",
+    type: "system",
+    cost: 1,
+    description: "Spend up to 6 credits. Deal that much damage.",
+    effect() {
+      const spend = Math.min(6, state.runCredits);
+      if (spend <= 0) return;
+      state.runCredits -= spend;
+      if (state.player) state.player.credits = state.runCredits;
+      dealAttackDamageToEnemy(spend, "Liquidate Assets");
+      log(`Liquidate Assets spends ${spend} credits.`, "system");
+    }
+  },
+  {
+    id: "defensive-contracts",
+    name: "Defensive Contracts",
+    type: "system",
+    cost: 1,
+    description: "Spend up to 6 credits. Gain that much block.",
+    effect() {
+      const spend = Math.min(6, state.runCredits);
+      if (spend <= 0) return;
+      state.runCredits -= spend;
+      if (state.player) state.player.credits = state.runCredits;
+      gainPlayerBlock(spend + (state.player.shieldBonus || 0), "Defensive Contracts");
+      log(`Defensive Contracts spends ${spend} credits.`, "system");
+    }
+  },
+  {
+    id: "compound-interest",
+    name: "Compound Interest",
+    type: "system",
+    cost: 1,
+    description: "Gain 2 credits plus 20% of your current credits.",
+    effect() {
+      const bonus = Math.floor((state.runCredits || 0) * 0.2);
+      gainCredits(2 + bonus, "Compound Interest");
+    }
+  },
+  {
+    id: "black-market-fuel",
+    name: "Black Market Fuel",
+    type: "system",
+    cost: 1,
+    description: "Spend 3 credits to gain 2 Laser.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      if (state.runCredits < 3) return;
+      state.runCredits -= 3;
+      if (state.player) state.player.credits = state.runCredits;
+      enemy.laserStacks = (enemy.laserStacks || 0) + 2;
+      log("Black Market Fuel converts credits into Laser.", "system");
+    }
+  },
+  {
+    id: "overclocked-extraction",
+    name: "Overclocked Extraction",
+    type: "system",
+    cost: 1,
+    description: "Gain 3 credits and +1 Laser.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      gainCredits(3, "Overclocked Extraction");
+      enemy.laserStacks = (enemy.laserStacks || 0) + 1;
+      log("Overclocked Extraction boosts mining output.", "system");
+    }
+  },
+  {
+    id: "heat-sink",
+    name: "Heat Sink",
+    type: "system",
+    cost: 1,
+    description: "Lose all Heat. Gain block equal to Heat lost.",
+    effect() {
+      const heat = state.player.heat || 0;
+      if (heat <= 0) return;
+      state.player.heat = 0;
+      gainPlayerBlock(heat + (state.player.shieldBonus || 0), "Heat Sink");
+      log(`Heat Sink vents ${heat} Heat into shielding.`, "system");
+    }
+  },
+  {
+    id: "pressure-build",
+    name: "Pressure Build",
+    type: "system",
+    cost: 1,
+    description: "Generate 2 Heat.",
+    effect() {
+      state.player.heat = (state.player.heat || 0) + 2;
+      log("Pressure Build increases reactor heat.", "system");
+    }
+  },
+  {
+    id: "thermal-spike",
+    name: "Thermal Spike",
+    type: "system",
+    cost: 1,
+    description: "Deal damage equal to 3 + Heat.",
+    effect() {
+      const heat = state.player.heat || 0;
+      dealAttackDamageToEnemy(3 + heat, "Thermal Spike");
+    }
+  },
+  {
+    id: "reactor-surge",
+    name: "Reactor Surge",
+    type: "system",
+    cost: 1,
+    description: "Double current Heat.",
+    effect() {
+      state.player.heat = (state.player.heat || 0) * 2;
+      log("Reactor Surge doubles current Heat.", "system");
+    }
+  },
+  {
+    id: "meltdown-protocol",
+    name: "Meltdown Protocol",
+    type: "system",
+    cost: 2,
+    description: "Consume all Heat. Deal 6 + Heat x3 damage.",
+    effect() {
+      const heat = state.player.heat || 0;
+      state.player.heat = 0;
+      dealAttackDamageToEnemy(6 + heat * 3, "Meltdown Protocol");
+      log("Meltdown Protocol discharges reactor overload.", "system");
+    }
+  },
+  {
+    id: "unstable-core",
+    name: "Unstable Core",
+    type: "system",
+    cost: 0,
+    description: "Gain 4 Heat. Take 2 hull damage.",
+    effect() {
+      state.player.heat = (state.player.heat || 0) + 4;
+      state.player.hull = Math.max(0, state.player.hull - 2);
+      log("Unstable Core spikes reactor output at a cost.", "system");
+    }
   }
 ];
 
@@ -965,6 +1713,373 @@ const MISSILE_CARDS = [
 ];
 
 const ALL_CARDS = [...SYSTEM_CARDS, ...MISSILE_CARDS];
+
+const CARD_TAGS_BY_ID = {
+  "charge-beam": ["beam"],
+  "laser-pulse": ["beam"],
+  "full-beam": ["beam", "ultra"],
+  overfocus: ["beam"],
+  "target-lock": ["beam"],
+  recalibrate: ["beam"],
+
+  "hunters-tag": ["mark"],
+  "paint-the-target": ["mark"],
+  "pursuit-sweep": ["mark"],
+  "claim-shot": ["mark"],
+  "dead-or-alive": ["mark", "ultra"],
+  "tracking-burst": ["mark"],
+  "signal-flare": ["mark"],
+  "glint-strike": ["mark"],
+  "hard-lock": ["mark"],
+
+  "reinforce-shields": ["block"],
+  "shield-slam": ["block"],
+  "collection-sweep": ["block"],
+  "skirmish-step": ["block"],
+  brace: ["block"],
+
+  "snub-reinforce": ["snub"],
+  "snub-strike": ["snub"],
+
+  "laser-drill": ["burn"],
+  "laser-alignment": ["burn"],
+  "overdrive-cannon": ["overheat"],
+  "vent-systems": ["overheat"],
+  cloak: ["stealth"],
+  "ambush-strike": ["stealth"],
+  "fortify-hull": ["fortress"],
+  "reinforced-plating": ["fortress"],
+  "deploy-drone": ["drone"],
+  "swarm-command": ["drone"],
+  "extract-resources": ["economy"],
+  "overclock-drill": ["economy"],
+  "overheat-cycle": ["burn"],
+  "industrial-beam": ["burn"],
+  "thermal-collapse": ["burn"],
+  "snub-rebuild": ["snub"],
+  "escort-protocol": ["snub"],
+  "snub-commander": ["snub"],
+  "barricade-core": ["block"],
+  "shield-battery": ["block"],
+  "impact-conversion": ["block"],
+  "assassination-protocol": ["mark"],
+  "precision-strike": ["mark"],
+  "power-conduit": ["beam"],
+  "beam-overload": ["beam"],
+  "focused-beam": ["beam"],
+  "launch-support": ["snub"],
+  "reinforced-frame": ["snub"],
+  "synchronized-assault": ["snub"],
+  "deploy-swarm": ["drone"],
+  "drone-uplink": ["drone"],
+  "swarm-strike": ["drone"],
+  "drone-shielding": ["drone"],
+  "thermal-spread": ["burn"],
+  "heat-shielding": ["burn"],
+  "smoldering-core": ["burn"],
+  "salvage-run": ["economy"],
+  "liquidate-assets": ["economy"],
+  "defensive-contracts": ["economy"],
+  "compound-interest": ["economy"],
+  "black-market-fuel": ["burn", "economy"],
+  "overclocked-extraction": ["burn", "economy"],
+  "heat-sink": ["overheat"],
+  "pressure-build": ["overheat"],
+  "thermal-spike": ["overheat"],
+  "reactor-surge": ["overheat"],
+  "meltdown-protocol": ["overheat"],
+  "unstable-core": ["overheat"],
+
+  "basic-attack": ["neutral"],
+  "basic-block": ["neutral"],
+  "pulse-shot": ["neutral"],
+  "patch-hull": ["neutral"],
+  missile: ["neutral"],
+  "debug-delete": ["neutral"],
+
+  "finishing-shot": ["ultra"],
+  "execution-barrage": ["ultra"]
+};
+
+ALL_CARDS.forEach(card => {
+  card.tags = [...(CARD_TAGS_BY_ID[card.id] || [])];
+  if (card.tags.includes("block") || card.tags.includes("overheat")) {
+    card.timing = "early";
+  } else if (card.tags.includes("mark") || card.tags.includes("snub")) {
+    card.timing = "mid";
+  } else if (card.tags.includes("burn") || card.tags.includes("drone")) {
+    card.timing = "late";
+  } else {
+    card.timing = "mid";
+  }
+});
+
+function getShipArchetype(shipId) {
+  if (shipId === "heavy-fighter") return "beam";
+  if (shipId === "stealth-bomber") return "mark";
+  if (shipId === "gunship") return "block";
+  if (shipId === "exploration-vessel") return "snub";
+  if (shipId === "mining-ship") return "burn";
+  return "neutral";
+}
+
+function getCommittedArchetype() {
+  const bias = state.run?.archetypeBias;
+  if (!bias) return null;
+  const entries = Object.entries(bias).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) return null;
+  const [topTag, topValue] = entries[0];
+  const secondValue = entries[1] ? entries[1][1] : 0;
+  if (topValue >= 4 && topValue - secondValue >= 2) return topTag;
+  return null;
+}
+
+function getRewardPool() {
+  const archetype = getShipArchetype(state.selectedShipId);
+  const committed = state.run?.committedArchetype || null;
+  const allowedArchetype = committed || archetype;
+  const earlyRun = (state.run?.encounterCount || 0) <= 2;
+
+  return ALL_CARDS.filter(card => {
+    const tags = card.tags || [];
+    if (earlyRun && card.timing === "late") return false;
+
+    if (tags.includes("commit")) {
+      return Boolean(committed && tags.includes(committed));
+    }
+    if (tags.includes(allowedArchetype)) return true;
+    if (tags.includes("neutral")) return true;
+    if (!state.endlessMode && tags.includes("ultra") && Math.random() < 0.1) return true;
+
+    return false;
+  });
+}
+
+function getRewardBiasStrength(encounterIndex) {
+  if (encounterIndex <= 1) return 0.35;
+  if (encounterIndex <= 3) return 0.7;
+  return 1.05;
+}
+
+function getTimingWeightMultiplier(timing) {
+  const encounterCount = state.run?.encounterCount || 0;
+  if (encounterCount <= 2) {
+    if (timing === "early") return 1.4;
+    if (timing === "late") return 0.65;
+    return 1.0;
+  }
+  if (encounterCount <= 5) {
+    if (timing === "mid") return 1.35;
+    return 1.0;
+  }
+  if (timing === "late") return 1.75;
+  if (timing === "early") return 0.75;
+  return 1.0;
+}
+
+function getCardRewardWeight(card) {
+  const tags = card.tags || [];
+  const bias = state.run?.archetypeBias || {};
+  const committed = state.run?.committedArchetype || null;
+  const scale = getRewardBiasStrength(state.encounterIndex);
+  const earlyRun = (state.run?.encounterCount || 0) <= 2;
+  const earlyDirectionWindow = (state.run?.encounterCount || 0) <= 3;
+  const shipArchetype = getShipArchetype(state.selectedShipId);
+  let weight = 1;
+
+  tags.forEach(tag => {
+    const tagBias = bias[tag] || 0;
+    if (tagBias > 0) {
+      weight += tagBias * 0.8 * scale;
+    }
+  });
+
+  if (committed && tags.includes(committed)) {
+    weight *= 2.4;
+  }
+  if (committed && tags.includes("commit") && tags.includes(committed)) {
+    weight *= 1.6;
+  }
+  if (earlyDirectionWindow && tags.includes(shipArchetype)) {
+    weight *= 1.2;
+  }
+
+  if (earlyRun && tags.includes("neutral")) {
+    weight *= 1.35;
+  }
+  if (earlyRun && tags.includes("beam")) {
+    weight *= 0.78;
+  }
+  if (earlyRun) {
+    const ownedCopies = (state.runDeck || []).filter(id => id === card.id).length;
+    if (ownedCopies > 0) {
+      weight *= 1 / (1 + ownedCopies * 0.45);
+    }
+  }
+
+  weight *= getArchetypeBalanceMultiplier(card);
+  weight *= getTimingWeightMultiplier(card.timing);
+
+  return Math.max(0.01, weight);
+}
+
+const MINI_COMBO_PAYOFF_IDS = new Set([
+  "full-beam",
+  "focused-beam",
+  "beam-overload",
+  "thermal-collapse",
+  "industrial-beam",
+  "meltdown-protocol",
+  "synchronized-assault",
+  "snub-commander",
+  "swarm-strike",
+  "liquidate-assets",
+  "defensive-contracts",
+  "impact-conversion",
+  "precision-strike",
+  "overclock-drill",
+  "black-market-fuel"
+]);
+
+function isMiniComboPayoffCard(card) {
+  return Boolean(card && MINI_COMBO_PAYOFF_IDS.has(card.id));
+}
+
+function pickWeightedCardFromPool(pool, predicate, excludedIds = new Set()) {
+  const eligible = pool.filter(card => predicate(card) && !excludedIds.has(card.id));
+  if (eligible.length === 0) return null;
+  const [picked] = pickWeightedRewardCards(eligible, 1);
+  return picked || null;
+}
+
+function applyMiniComboRewardRules(pool, picks, choiceCount) {
+  let result = [...picks];
+  const encounterCount = state.run?.encounterCount || 0;
+  const committed = state.run?.committedArchetype || null;
+  const shipArchetype = committed || getShipArchetype(state.selectedShipId);
+  const counts = state.run?.archetypeCounts || {};
+
+  if (encounterCount <= 3 && !committed) {
+    const highest = Math.max(
+      counts.beam || 0,
+      counts.burn || 0,
+      counts.snub || 0,
+      counts.block || 0,
+      counts.mark || 0,
+      counts.economy || 0,
+      counts.drone || 0,
+      counts.overheat || 0
+    );
+    const hasArchetypeCard = result.some(card => (card.tags || []).includes(shipArchetype));
+    if (highest < 2 && !hasArchetypeCard) {
+      const replacement = pickWeightedCardFromPool(pool, card => (card.tags || []).includes(shipArchetype));
+      if (replacement) {
+        result[0] = replacement;
+      }
+    }
+  }
+
+  if (encounterCount >= 3 && encounterCount <= 5) {
+    let payoffSeen = false;
+    result = result.filter(card => {
+      if (!isMiniComboPayoffCard(card)) return true;
+      if (!payoffSeen) {
+        payoffSeen = true;
+        return true;
+      }
+      return false;
+    });
+
+    while (result.length < choiceCount) {
+      const excluded = new Set(result.map(card => card.id));
+      const fill = pickWeightedCardFromPool(pool, card => !isMiniComboPayoffCard(card), excluded);
+      if (!fill) break;
+      result.push(fill);
+    }
+  }
+
+  if (encounterCount >= 4 && encounterCount <= 5 && !state.run?.miniComboSynergyShown) {
+    const hasPayoff = result.some(isMiniComboPayoffCard);
+    if (!hasPayoff) {
+      const excluded = new Set(result.map(card => card.id));
+      const payoff = pickWeightedCardFromPool(pool, isMiniComboPayoffCard, excluded);
+      if (payoff) {
+        if (result.length >= choiceCount) result[result.length - 1] = payoff;
+        else result.push(payoff);
+      }
+    }
+    if (result.some(isMiniComboPayoffCard)) {
+      state.run.miniComboSynergyShown = true;
+    }
+  }
+
+  return result.slice(0, choiceCount);
+}
+
+function getArchetypeBalanceMultiplier(card) {
+  const run = state.run;
+  if (!run || run.committedArchetype) return 1;
+  if ((run.encounterCount || 0) > 3) return 1;
+  const counts = run.archetypeCounts || {};
+  const keys = ["burn", "economy", "snub", "drone", "beam", "overheat", "mark", "block"];
+  const trackedTags = (card.tags || []).filter(tag => keys.includes(tag));
+  if (trackedTags.length === 0) return 1;
+  const total = keys.reduce((sum, key) => sum + (counts[key] || 0), 0);
+  const mean = total / keys.length;
+  const cardMean = trackedTags.reduce((sum, tag) => sum + (counts[tag] || 0), 0) / trackedTags.length;
+  const delta = mean - cardMean;
+  const adjust = Math.max(-0.12, Math.min(0.12, delta * 0.08));
+  return 1 + adjust;
+}
+
+function pickWeightedRewardCards(pool, count) {
+  const available = [...pool];
+  const picks = [];
+
+  while (picks.length < count && available.length > 0) {
+    let totalWeight = 0;
+    const weighted = available.map(card => {
+      const weight = getCardRewardWeight(card);
+      totalWeight += weight;
+      return { card, weight };
+    });
+
+    let roll = Math.random() * totalWeight;
+    let pickedIndex = weighted.length - 1;
+    for (let i = 0; i < weighted.length; i += 1) {
+      roll -= weighted[i].weight;
+      if (roll <= 0) {
+        pickedIndex = i;
+        break;
+      }
+    }
+
+    picks.push(weighted[pickedIndex].card);
+    available.splice(pickedIndex, 1);
+  }
+
+  return picks;
+}
+
+function applyCardToArchetypeBias(cardId) {
+  const card = getCardById(cardId);
+  if (!card || !card.tags || !state.run || !state.run.archetypeBias) return;
+  card.tags.forEach(tag => {
+    if (typeof state.run.archetypeBias[tag] === "number") {
+      state.run.archetypeBias[tag] += 1;
+    }
+    if (state.run.archetypeCounts && typeof state.run.archetypeCounts[tag] === "number") {
+      state.run.archetypeCounts[tag] += 1;
+    }
+  });
+  if (!state.run.committedArchetype) {
+    const committed = getCommittedArchetype();
+    if (committed) {
+      state.run.committedArchetype = committed;
+      log(`Run commitment formed: ${committed.toUpperCase()} archetype locked in.`, "system");
+    }
+  }
+}
 
 function getCardById(cardId) {
   return ALL_CARDS.find(card => card.id === cardId) || null;
@@ -1007,7 +2122,17 @@ const CARD_ROLE_BY_ID = {
   "laser-pulse": "beam",
   "full-beam": "beam",
   overfocus: "beam",
-  recalibrate: "mark"
+  recalibrate: "mark",
+  "overdrive-cannon": "beam",
+  "vent-systems": "beam",
+  cloak: "tactical",
+  "ambush-strike": "tactical",
+  "fortify-hull": "system",
+  "reinforced-plating": "system",
+  "deploy-drone": "system",
+  "swarm-command": "tactical",
+  "extract-resources": "system",
+  "overclock-drill": "system"
 };
 
 function getCardCategoryLabel(card) {
@@ -1072,16 +2197,32 @@ const REWARD_POOL_IDS = [
 
 const ENEMY_TYPES = [
   {
+    id: "sentinel-frigate",
+    name: "Sentinel Frigate",
+    difficulty: "boss",
+    maxHull: 58,
+    getIntent(turn) {
+      const cycle = [
+        { type: "attack", amount: 7, text: "Attack for 7" },
+        { type: "block", amount: 8, text: "Will gain 8 block" },
+        { type: "disrupt", amount: 0, text: "Will disrupt systems" },
+        { type: "attack", amount: 12, text: "Overcharge Cannon for 12" }
+      ];
+      return cycle[(turn - 1) % cycle.length];
+    }
+  },
+  {
     id: "scout",
     name: "Scout Drone",
     difficulty: "easy",
     trait: "overcharged",
-    maxHull: 10,
+    counter: "beam-dampener",
+    maxHull: 18,
     getIntent(turn) {
       const cycle = [
-        { type: "attack", amount: 2, text: "Attack for 2" },
-        { type: "block", amount: 2, text: "Will gain 2 block" },
-        { type: "attack", amount: 2, text: "Attack for 2" }
+        { type: "attack", amount: 6, text: "Attack for 6" },
+        { type: "attack", amount: 5, text: "Attack for 5" },
+        { type: "block", amount: 4, text: "Will gain 4 block" }
       ];
       return cycle[(turn - 1) % cycle.length];
     }
@@ -1090,12 +2231,14 @@ const ENEMY_TYPES = [
     id: "raider",
     name: "Raider Skiff",
     difficulty: "medium",
-    maxHull: 15,
+    counter: "burn-purge",
+    maxHull: 21,
     getIntent(turn) {
       const cycle = [
+        { type: "block", amount: 6, text: "Will gain 6 block" },
         { type: "attack", amount: 4, text: "Attack for 4" },
-        { type: "attack", amount: 4, text: "Attack for 4" },
-        { type: "block", amount: 4, text: "Will gain 4 block" }
+        { type: "block", amount: 6, text: "Will gain 6 block" },
+        { type: "attack", amount: 5, text: "Attack for 5" }
       ];
       return cycle[(turn - 1) % cycle.length];
     }
@@ -1104,12 +2247,14 @@ const ENEMY_TYPES = [
     id: "hunter",
     name: "Hunter Frigate",
     difficulty: "hard",
-    maxHull: 22,
+    counter: "mark-suppressor",
+    maxHull: 24,
     getIntent(turn) {
       const cycle = [
+        { type: "attack", amount: 4, text: "Attack for 4" },
+        { type: "attack", amount: 5, text: "Attack for 5" },
         { type: "attack", amount: 6, text: "Attack for 6" },
-        { type: "block", amount: 5, text: "Will gain 5 block" },
-        { type: "attack", amount: 6, text: "Attack for 6" }
+        { type: "block", amount: 5, text: "Will gain 5 block" }
       ];
       return cycle[(turn - 1) % cycle.length];
     }
@@ -1118,6 +2263,7 @@ const ENEMY_TYPES = [
     id: "bulwark",
     name: "Bulwark Corvette",
     difficulty: "hard",
+    counter: "block-breaker",
     maxHull: 30,
     getIntent(turn) {
       const cycle = [
@@ -1134,6 +2280,7 @@ const ENEMY_TYPES = [
     name: "Interceptor Ace",
     difficulty: "hard",
     trait: "jammer",
+    counter: "snub-hunter",
     maxHull: 18,
     getIntent(turn) {
       const cycle = [
@@ -1150,6 +2297,7 @@ const ENEMY_TYPES = [
     name: "Support Escort",
     difficulty: "hard",
     trait: "shielder",
+    counter: "drone-swarm",
     maxHull: 16,
     getIntent(turn) {
       const cycle = [
@@ -1178,6 +2326,7 @@ const ENEMY_TYPES = [
 
 const els = {
   restartBtn: document.getElementById("restartBtn"),
+  muteBtn: document.getElementById("muteBtn"),
   redrawBtn: document.getElementById("redrawBtn"),
   endTurnBtn: document.getElementById("endTurnBtn"),
 
@@ -1208,6 +2357,7 @@ const els = {
   overlayText: document.getElementById("overlayText"),
   overlayBtn: document.getElementById("overlayBtn"),
   rewardOptions: document.getElementById("rewardOptions"),
+  tooltip: document.getElementById("tooltip"),
   comboBanner: document.getElementById("comboBanner"),
   startScreen: document.getElementById("startScreen"),
   shipSelectScreen: document.getElementById("shipSelectScreen"),
@@ -1231,6 +2381,16 @@ const els = {
 };
 
 let comboBannerTimeout = null;
+let tooltipTargetEl = null;
+
+const TOOLTIP_TEXT = {
+  burn: "Burn deals damage over time at end of turn.",
+  laser: "Laser is a Mining Ship resource used to power burn-related effects.",
+  mark: "Mark increases the effectiveness of execution and mark payoff cards.",
+  beam: "Beam is a Heavy Fighter charge resource used for burst attacks.",
+  block: "Block prevents incoming damage before hull is damaged.",
+  snub: "Snub Fighter absorbs damage after Block and before player hull."
+};
 
 function showComboBanner(text) {
   if (!els.comboBanner) return;
@@ -1263,6 +2423,63 @@ function hideComboBanner() {
   els.comboBanner.classList.add("hidden");
   els.comboBanner.classList.remove("fade-out");
   els.comboBanner.textContent = "";
+}
+
+function showTooltip(text, x, y) {
+  if (!els.tooltip || !text) return;
+  els.tooltip.textContent = text;
+  els.tooltip.classList.remove("hidden");
+  moveTooltip(x, y);
+}
+
+function moveTooltip(x, y) {
+  if (!els.tooltip) return;
+  const pad = 14;
+  const rect = els.tooltip.getBoundingClientRect();
+  const maxX = window.innerWidth - rect.width - pad;
+  const maxY = window.innerHeight - rect.height - pad;
+  const nextX = Math.max(pad, Math.min(x + 14, maxX));
+  const nextY = Math.max(pad, Math.min(y + 16, maxY));
+  els.tooltip.style.left = `${nextX}px`;
+  els.tooltip.style.top = `${nextY}px`;
+}
+
+function hideTooltip() {
+  if (!els.tooltip) return;
+  els.tooltip.classList.add("hidden");
+}
+
+function enhanceCardDescriptionWithTooltips(description) {
+  if (!description) return "";
+  return description
+    .replace(/Snub Fighter/gi, `<span class="tooltip-keyword" data-tooltip="${TOOLTIP_TEXT.snub}">Snub Fighter</span>`)
+    .replace(/\bBurn\b/gi, `<span class="tooltip-keyword" data-tooltip="${TOOLTIP_TEXT.burn}">Burn</span>`)
+    .replace(/\bLaser\b/gi, `<span class="tooltip-keyword" data-tooltip="${TOOLTIP_TEXT.laser}">Laser</span>`)
+    .replace(/\bMark\b/gi, `<span class="tooltip-keyword" data-tooltip="${TOOLTIP_TEXT.mark}">Mark</span>`)
+    .replace(/\bBeam\b/gi, `<span class="tooltip-keyword" data-tooltip="${TOOLTIP_TEXT.beam}">Beam</span>`)
+    .replace(/\bBlock\b/gi, `<span class="tooltip-keyword" data-tooltip="${TOOLTIP_TEXT.block}">Block</span>`);
+}
+
+function initTooltipSystem() {
+  if (!els.tooltip) return;
+  document.addEventListener("mouseover", event => {
+    const target = event.target instanceof Element ? event.target.closest("[data-tooltip]") : null;
+    if (!target) return;
+    if (target === tooltipTargetEl) return;
+    tooltipTargetEl = target;
+    showTooltip(target.getAttribute("data-tooltip") || "", event.clientX, event.clientY);
+  });
+  document.addEventListener("mousemove", event => {
+    if (!tooltipTargetEl) return;
+    moveTooltip(event.clientX, event.clientY);
+  });
+  document.addEventListener("mouseout", event => {
+    if (!tooltipTargetEl) return;
+    const related = event.relatedTarget;
+    if (related instanceof Element && tooltipTargetEl.contains(related)) return;
+    tooltipTargetEl = null;
+    hideTooltip();
+  });
 }
 
 function showStartScreen() {
@@ -1391,7 +2608,40 @@ function renderBattlefield() {
   const playerEnergyMax = state.player.baseEnergy + state.player.reactorBonus;
 
   const playerBlockHtml = state.player.block > 0
-    ? `<div class="unit-block">🛡 ${state.player.block}</div>`
+    ? `<div class="unit-block" data-tooltip="${TOOLTIP_TEXT.block}">🛡 ${state.player.block}</div>`
+    : "";
+  const selectedEnemy = getSelectedEnemy();
+  const playerLaserAmount =
+    typeof state.player.laserStacks === "number"
+      ? state.player.laserStacks
+      : (selectedEnemy?.laserStacks || 0);
+  const playerLaserHtml =
+    state.selectedShipId === "mining-ship"
+      ? `<div class="player-laser" data-tooltip="${TOOLTIP_TEXT.laser}">Laser: ${playerLaserAmount}</div>`
+      : "";
+  const snub = state.selectedShipId === "exploration-vessel" ? state.player.snub : null;
+  console.log("SNUB DEBUG", state.selectedShipId, state.player?.snub);
+  const snubHullPct =
+    snub && snub.maxHull > 0 ? Math.max(0, Math.min(100, (snub.hull / snub.maxHull) * 100)) : 0;
+  const snubStatusText = snub
+    ? snub.alive
+      ? `${snub.hull} / ${snub.maxHull}`
+      : (snub.respawnCounter || 0) > 0
+      ? "Regenerating"
+      : "Destroyed"
+    : "";
+  const snubHtml = snub
+    ? `
+      <div id="snubUnit" class="snub-unit ${snub.alive ? "" : "destroyed"}">
+        <div class="snub-label" data-tooltip="${TOOLTIP_TEXT.snub}">Snub Fighter</div>
+        <div class="unit-hull snub-hull">
+          <div class="bar">
+            <div class="bar-fill player-fill" style="width: ${snubHullPct}%"></div>
+          </div>
+          <div class="unit-hull-text">${snubStatusText}</div>
+        </div>
+      </div>
+    `
     : "";
 
   const enemiesHtml = state.enemies
@@ -1408,16 +2658,17 @@ function renderBattlefield() {
           : enemy.hull > 0
           ? "—"
           : "Destroyed";
-      const enemyBlockHtml = enemy.block > 0 ? `<div class="unit-block">🛡 ${enemy.block}</div>` : "";
-      const markHtml = (enemy.markStacks || 0) > 0 ? `<div class="unit-mini-badge mark">MARK ${enemy.markStacks}</div>` : "";
-      const beamHtml = (enemy.beamCharge || 0) > 0 ? `<div class="unit-mini-badge beam">BEAM ${enemy.beamCharge}</div>` : "";
+      const enemyBlockHtml = enemy.block > 0 ? `<div class="unit-block" data-tooltip="${TOOLTIP_TEXT.block}">🛡 ${enemy.block}</div>` : "";
+      const enemyBurnHtml = (enemy.burnStacks || 0) > 0 ? `<div class="unit-burn" data-tooltip="${TOOLTIP_TEXT.burn}">Burn: ${enemy.burnStacks}</div>` : "";
+      const markHtml = (enemy.markStacks || 0) > 0 ? `<div class="unit-mini-badge mark" data-tooltip="${TOOLTIP_TEXT.mark}">MARK ${enemy.markStacks}</div>` : "";
+      const beamHtml = (enemy.beamCharge || 0) > 0 ? `<div class="unit-mini-badge beam" data-tooltip="${TOOLTIP_TEXT.beam}">BEAM ${enemy.beamCharge}</div>` : "";
       const traitHtml = enemy.trait ? `<div class="unit-mini-badge trait">${enemy.trait.toUpperCase()}</div>` : "";
       const roleHtml = enemy.role === "bounty" ? `<div class="unit-mini-badge role">BOUNTY</div>` : `<div class="unit-mini-badge role escort">ESCORT</div>`;
       const eliteHtml = enemy.difficulty === "elite" ? `<div class="unit-mini-badge elite">ELITE</div>` : "";
       const bossHtml = enemy.bossType ? `<div class="unit-mini-badge boss">BOSS</div>` : "";
 
       return `
-        <div class="enemy-unit${selectedClass}${destroyedClass}">
+        <div class="enemy-unit${selectedClass}${destroyedClass}" data-enemy-uid="${enemy.uid}">
           <div class="enemy-intent-badge">${intentText}</div>
           <div class="enemy-meta-badges">
             ${bossHtml}
@@ -1436,6 +2687,7 @@ function renderBattlefield() {
             <div class="unit-hull-text">${enemy.hull} / ${enemy.maxHull}</div>
           </div>
           ${enemyBlockHtml}
+          ${enemyBurnHtml}
           ${isSelected ? `<div class="unit-targeted">TARGETED</div>` : ""}
         </div>
       `;
@@ -1443,17 +2695,21 @@ function renderBattlefield() {
     .join("");
 
   els.battlefield.innerHTML = `
-    <div class="player-unit">
-      <div class="player-ship-name">${getShipDisplayName(state.selectedShipId)}</div>
-      <div class="player-energy">⚡ ${state.player.energy} / ${playerEnergyMax}</div>
-      <img src="./assets/images/player_ship.png" class="ship-img" />
-      <div class="unit-hull">
-        <div class="bar">
-          <div class="bar-fill player-fill" style="width: ${playerHullPct}%"></div>
+    <div id="playerGroup" class="player-group">
+      <div id="playerUnit" class="player-unit">
+        <div class="player-ship-name">${getShipDisplayName(state.selectedShipId)}</div>
+        <div class="player-energy">⚡ ${state.player.energy} / ${playerEnergyMax}</div>
+        <img src="./assets/images/player_ship.png" class="ship-img" />
+        <div class="unit-hull">
+          <div class="bar">
+            <div class="bar-fill player-fill" style="width: ${playerHullPct}%"></div>
+          </div>
+          <div class="unit-hull-text">${state.player.hull} / ${state.player.maxHull}</div>
         </div>
-        <div class="unit-hull-text">${state.player.hull} / ${state.player.maxHull}</div>
+      ${playerLaserHtml}
+        ${playerBlockHtml}
       </div>
-      ${playerBlockHtml}
+      ${snubHtml}
     </div>
     <div class="enemy-units-wrap">
       ${enemiesHtml}
@@ -1463,9 +2719,12 @@ function renderBattlefield() {
 
 function renderPlayerHud() {
   if (!els.playerHud || !state.player) return;
+  const creditsValue =
+    typeof state.player.credits === "number" ? state.player.credits : state.runCredits;
 
   els.playerHud.innerHTML = `
     <div class="hud-pill hud-resource">Fuel ${state.player.fuel}</div>
+    <div class="hud-pill hud-resource resource-credits">$ Credits ${creditsValue}</div>
     <div class="hud-pill hud-resource">Draw ${state.drawPile.length}</div>
     <div class="hud-pill hud-resource">Discard ${state.discardPile.length}</div>
     <div class="hud-pill hud-resource">Exhaust ${state.exhaustPile.length}</div>
@@ -1511,6 +2770,75 @@ function log(message, type = "") {
   entry.className = `log-entry ${type}`.trim();
   entry.textContent = message;
   els.log.prepend(entry);
+}
+
+function spawnFloatingText(text, x, y, className = "") {
+  if (!els.battlefield) return;
+  const el = document.createElement("div");
+  el.className = `combat-float-text float-up ${className}`.trim();
+  el.textContent = text;
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
+  els.battlefield.appendChild(el);
+  setTimeout(() => {
+    if (el.parentNode) el.parentNode.removeChild(el);
+  }, 850);
+}
+
+function spawnFloatingTextNearElement(targetEl, text, className = "") {
+  if (!els.battlefield || !targetEl) return;
+  const battlefieldRect = els.battlefield.getBoundingClientRect();
+  const targetRect = targetEl.getBoundingClientRect();
+  const x = targetRect.left - battlefieldRect.left + targetRect.width * 0.5;
+  const y = targetRect.top - battlefieldRect.top + 12;
+  spawnFloatingText(text, x, y, className);
+}
+
+function showCreditsPopup(amount) {
+  if (!els.playerHud || amount <= 0) return;
+  const creditsEl = els.playerHud.querySelector(".resource-credits");
+  if (!creditsEl) return;
+  const popup = document.createElement("span");
+  popup.className = "credit-float-text";
+  popup.textContent = `+${amount} Credits`;
+  creditsEl.appendChild(popup);
+  setTimeout(() => {
+    if (popup.parentNode) popup.parentNode.removeChild(popup);
+  }, 850);
+}
+
+function gainCredits(amount, sourceText) {
+  if (amount <= 0) return;
+  state.runCredits += amount;
+  if (state.player) state.player.credits = state.runCredits;
+  log(`Gained ${amount} credits from ${sourceText}.`, "system");
+  showCreditsPopup(amount);
+}
+
+function applyHitFlash(targetEl) {
+  if (!targetEl) return;
+  targetEl.classList.remove("hit-flash");
+  void targetEl.offsetWidth;
+  targetEl.classList.add("hit-flash");
+  setTimeout(() => targetEl.classList.remove("hit-flash"), 120);
+}
+
+function applyBattlefieldShake() {
+  if (!els.battlefield) return;
+  els.battlefield.classList.remove("screen-shake");
+  void els.battlefield.offsetWidth;
+  els.battlefield.classList.add("screen-shake");
+  setTimeout(() => els.battlefield.classList.remove("screen-shake"), 200);
+}
+
+function animateEnemyAttack(enemyUid) {
+  if (!enemyUid) return;
+  const enemyEl = document.querySelector(`.enemy-unit[data-enemy-uid="${enemyUid}"]`);
+  if (!enemyEl) return;
+  enemyEl.classList.remove("enemy-attack-lunge");
+  void enemyEl.offsetWidth;
+  enemyEl.classList.add("enemy-attack-lunge");
+  setTimeout(() => enemyEl.classList.remove("enemy-attack-lunge"), 170);
 }
 
 function getAliveEnemies() {
@@ -1587,13 +2915,18 @@ function getEncounterTierLabel(index) {
 
 function awardEncounterCredits() {
   const amount = getCreditRewardForEncounter(state.encounterIndex);
-  state.runCredits += amount;
-  log(`Credits gained: +${amount}. Total credits: ${state.runCredits}.`, "system");
+  gainCredits(amount, "encounter reward");
 }
 
 function buildRewardChoices() {
-  const pool = shuffle(REWARD_POOL_IDS);
-  return pool.slice(0, 3);
+  const pool = getRewardPool();
+  const choiceCount = (state.run?.encounterCount || 0) <= 2 ? 2 : 3;
+  const weightedPicks = pickWeightedRewardCards(pool, choiceCount);
+  const finalPicks = applyMiniComboRewardRules(pool, weightedPicks, choiceCount);
+  console.log("REWARD SHIP:", state.selectedShipId);
+  console.log("REWARD ARCHETYPE:", getShipArchetype(state.selectedShipId));
+  console.log("REWARD POOL IDS:", pool.map(card => card.id));
+  return finalPicks.map(card => card.id);
 }
 
 function getCreditRewardForEncounter(encounterIndex) {
@@ -1677,11 +3010,34 @@ function renderMapScreen() {
   if (!els.mapTitleText || !els.mapSubtitleText || !els.mapCurrentInfo || !els.mapSvgWrap || !els.mapActionArea) return;
 
   els.mapTitleText.textContent = `Star Map — Sector ${state.sectorNumber}`;
-  els.mapSubtitleText.textContent = `Notoriety: ${getNotorietyLabel(state.notoriety)} • Fuel: ${state.player.fuel} • ${getSectorProgressText()}`;
+  const notorietyTooltip =
+    getNotorietyLabel(state.notoriety) === "Hunted"
+      ? "Hunted: powerful enemies are now actively pursuing you in endless mode."
+      : "Notoriety reflects how much attention your run has attracted.";
+  els.mapSubtitleText.innerHTML = `
+    <span class="map-hud-tip" data-tooltip="${notorietyTooltip}">Notoriety: ${getNotorietyLabel(state.notoriety)}</span>
+    •
+    <span class="map-hud-tip" data-tooltip="Fuel is used to travel between map nodes.">Fuel: ${state.player.fuel}</span>
+    •
+    <span class="map-hud-tip" data-tooltip="Credits are spent at Shops and other special services.">Credits: ${state.runCredits}</span>
+    •
+    <span class="map-hud-tip" data-tooltip="Tracks your progress through the current sector.">${getSectorProgressText()}</span>
+  `;
+
+  const gateStateHtml =
+    currentNode.type === "gate"
+      ? `<div class="reward-meta"><span class="map-hud-tip" data-tooltip="${
+          state.gateUnlocked
+            ? "Boss Contract is available. Defeating the boss grants major rewards."
+            : "Boss Contract is locked until the required sector progress or gate condition is met."
+        }">Boss Contract Status: ${state.gateUnlocked ? "Unlocked" : "Locked"}</span></div>`
+      : "";
 
   els.mapCurrentInfo.innerHTML = `
     <div class="reward-name">Current Location</div>
     <div class="reward-meta">Node ${currentNode.id} • ${formatNodeLabel(currentNode)}${formatNodeStatus(currentNode)}</div>
+    ${gateStateHtml}
+    <div class="reward-meta"><span class="map-hud-tip" data-tooltip="Credits are spent at Shops and other special services.">Credits: ${state.runCredits}</span></div>
   `;
 
   els.mapSvgWrap.innerHTML = renderStarMapSvg();
@@ -1883,12 +3239,13 @@ function showDockOverlay() {
   repairBtn.disabled = state.runCredits < 40;
   repairBtn.innerHTML = `
     <div class="reward-name">Repair hull</div>
-    <div class="reward-meta">Restore 10 hull — 40 credits</div>
+    <div class="reward-meta">Restore 25% max hull — 40 credits</div>
   `;
   repairBtn.addEventListener("click", () => {
     if (state.runCredits < 40) return;
     state.runCredits -= 40;
-    repairPlayerHull(10, "Dock");
+    const healAmount = Math.floor(state.player.maxHull * 0.25);
+    repairPlayerHull(healAmount, "Dock");
     finishNodeAfterNonCombat();
   });
 
@@ -2078,8 +3435,7 @@ function showDistressOverlay() {
     const roll = Math.random();
 
     if (roll < 0.45) {
-      state.runCredits += 20;
-      log("Distress signal yields salvage: +20 credits.", "system");
+      gainCredits(20, "Distress signal salvage");
       finishNodeAfterNonCombat();
       return;
     }
@@ -2298,13 +3654,13 @@ function showPlanetOverlay() {
 }
 
 function getSectorBossName(sectorNumber) {
-  if (sectorNumber === 1) return "Patrol Commander";
+  if (sectorNumber === 1) return "Sentinel Frigate";
   if (sectorNumber === 2) return "Contract Warden";
   return "Blacksite Hunter";
 }
 
 function getSectorBossDescription(sectorNumber) {
-  if (sectorNumber === 1) return "Heavy striker with escort support.";
+  if (sectorNumber === 1) return "Patterned warship with adaptive system disruption.";
   if (sectorNumber === 2) return "Aggressive dual-ship assault.";
   return "Fortified flagship with support cover.";
 }
@@ -2340,15 +3696,14 @@ function getNotorietyLabel(notoriety) {
 
 function buildSectorBossEncounter(sectorNumber) {
   let bossType = "blacksite-hunter";
-  if (sectorNumber === 1) bossType = "patrol-commander";
+  if (sectorNumber === 1) bossType = "sentinel-frigate";
   else if (sectorNumber === 2) bossType = "contract-warden";
 
   if (sectorNumber === 1) {
-    const lead = getEnemyTypeById("burst-bounty") || ENEMY_TYPES[Math.min(3, ENEMY_TYPES.length - 1)];
-    const escort = getEnemyTypeById("support-escort") || ENEMY_TYPES[0];
-    const bossEnemy = buildEnemyFromTemplate(lead, "bounty", "hard");
+    const lead = getEnemyTypeById("sentinel-frigate") || ENEMY_TYPES[Math.min(3, ENEMY_TYPES.length - 1)];
+    const bossEnemy = buildEnemyFromTemplate(lead, "bounty", "elite");
     bossEnemy.bossType = bossType;
-    return [bossEnemy, buildEnemyFromTemplate(escort, "escort", "hard")];
+    return [bossEnemy];
   }
 
   if (sectorNumber === 2) {
@@ -2551,8 +3906,7 @@ function resolvePlanetEvent() {
   state.pendingReward = true;
 
   if (kind === "cache") {
-    state.runCredits += 30;
-    log(`Planet: derelict cache — +30 credits. Total: ${state.runCredits}.`, "system");
+    gainCredits(30, "planet derelict cache");
     showPlanetResolvedOverlay("Planet", "Derelict cache: +30 credits.");
     return;
   }
@@ -2598,9 +3952,10 @@ function showAmbushCreditsOnlyOverlay() {
   state.pendingReward = true;
 
   const creditReward = getCreditRewardForEncounter(state.encounterIndex);
+  const earnedNow = state.lastCombatCreditsEarned || 0;
 
   els.overlayTitle.textContent = "Encounter Won";
-  els.overlayText.textContent = `Low fuel — ambush. No card salvage. +${creditReward} credits.`;
+  els.overlayText.textContent = `Low fuel — ambush. No card salvage.\nCredits earned: +${earnedNow}\nCurrent credits: ${state.runCredits}\nOptional reward: +${creditReward} credits.`;
   els.overlayBtn.classList.add("hidden");
   els.rewardOptions.innerHTML = "";
   els.rewardOptions.classList.remove("hidden");
@@ -2623,10 +3978,18 @@ function chooseCardReward() {
 
 function chooseReward(cardId) {
   state.runDeck.push(cardId);
+  applyCardToArchetypeBias(cardId);
   const card = ALL_CARDS.find(c => c.id === cardId);
   if (card) {
     log(`Reward chosen: ${card.name} added to your run deck.`, "system");
   }
+  advanceAfterCombatRewards();
+}
+
+function skipReward() {
+  state.pendingReward = false;
+  state.rewardChoices = [];
+  log("Reward skipped.", "system");
   advanceAfterCombatRewards();
 }
 
@@ -2654,15 +4017,25 @@ function showRewardOverlay() {
     button.addEventListener("click", () => chooseReward(cardId));
     els.rewardOptions.appendChild(button);
   });
+
+  const skipBtn = document.createElement("button");
+  skipBtn.className = "reward-option reward-option-secondary";
+  skipBtn.innerHTML = `
+    <div class="reward-name">Skip</div>
+    <div class="reward-meta">Decline all card rewards and continue.</div>
+  `;
+  skipBtn.addEventListener("click", skipReward);
+  els.rewardOptions.appendChild(skipBtn);
 }
 
 function showPostVictoryChoiceOverlay() {
   state.pendingReward = true;
 
   const creditReward = getCreditRewardForEncounter(state.encounterIndex);
+  const earnedNow = state.lastCombatCreditsEarned || 0;
 
   els.overlayTitle.textContent = "Encounter Won";
-  els.overlayText.textContent = "Choose your reward.";
+  els.overlayText.textContent = `Credits earned: +${earnedNow}\nCurrent credits: ${state.runCredits}\nChoose your reward.`;
   els.overlayBtn.classList.add("hidden");
   els.rewardOptions.innerHTML = "";
   els.rewardOptions.classList.remove("hidden");
@@ -2689,13 +4062,16 @@ function showPostVictoryChoiceOverlay() {
 }
 
 function buildEnemyFromTemplate(template, role, tier) {
-  const mult = TIER_MULTIPLIER[tier] ?? 1;
+  const endlessScale =
+    state.endlessMode && state.sectorNumber > 3 ? 1 + (state.sectorNumber - 3) * 0.08 : 1;
+  const mult = (TIER_MULTIPLIER[tier] ?? 1) * endlessScale;
   const scaledMaxHull = Math.round(template.maxHull * mult);
   const baseGetIntent = template.getIntent;
 
   function scaledGetIntent(turn) {
     const base = baseGetIntent(turn);
-    const scaledAmount = Math.max(0, Math.round(base.amount * mult));
+    const pressureBonus = base.type === "attack" ? Math.floor(Math.max(0, turn - 1) / 2) : 0;
+    const scaledAmount = Math.max(0, Math.round(base.amount * mult) + pressureBonus);
     return {
       ...base,
       amount: scaledAmount,
@@ -2708,12 +4084,15 @@ function buildEnemyFromTemplate(template, role, tier) {
     id: template.id,
     name: template.name,
     trait: template.trait || null,
+    counter: template.counter || null,
     difficulty: tier,
     maxHull: scaledMaxHull,
     hull: scaledMaxHull,
     block: 0,
     markStacks: 0,
     beamCharge: 0,
+    burnStacks: 0,
+    laserStacks: 0,
     role,
     turnCounter: 0,
     bossType: null,
@@ -2921,6 +4300,19 @@ function beginEncounter() {
   state.player.block = 0;
   state.nextAttackBonus = 0;
   state.attacksPlayedThisTurn = 0;
+  state.player.burnBonus = 0;
+  state.player.heat = 0;
+  state.player.stealthReady = false;
+  state.player.damageReductionFlat = 0;
+  state.player.drones = 0;
+  if (state.selectedShipId === "exploration-vessel") {
+    state.player.snub = {
+      alive: true,
+      hull: 5,
+      maxHull: 5,
+      respawnCounter: 0
+    };
+  }
   state.player.energy = state.player.baseEnergy + state.player.reactorBonus;
 
   hideOverlay();
@@ -2944,6 +4336,7 @@ function beginEncounter() {
 
 function startRun(selectedShipId = "heavy-fighter") {
   state.selectedShipId = selectedShipId;
+  const isExplorationShip = state.selectedShipId === "exploration-vessel";
   const baseHull = getShipBaseHull(selectedShipId);
   state.player = {
     maxHull: baseHull,
@@ -2954,9 +4347,19 @@ function startRun(selectedShipId = "heavy-fighter") {
     weaponBonus: 0,
     shieldBonus: 0,
     reactorBonus: 0,
+    burnBonus: 0,
+    snub: isExplorationShip
+      ? {
+          alive: true,
+          hull: 5,
+          maxHull: 5,
+          respawnCounter: 0
+        }
+      : null,
     maxFuel: 100,
     fuel: 100
   };
+  ensureSnubState();
 
   state.runDeck = makeRunDeck(selectedShipId);
   state.runCredits = getShipStartingCredits(selectedShipId);
@@ -2975,6 +4378,33 @@ function startRun(selectedShipId = "heavy-fighter") {
   state.pendingBoss = false;
   state.sectorNumber = 1;
   state.notoriety = 0;
+  state.bossCount = 0;
+  state.endlessMode = false;
+  state.run = {
+    archetypeBias: {
+      beam: 0,
+      burn: 0,
+      snub: 0,
+      block: 0,
+      mark: 0,
+      economy: 0,
+      drone: 0,
+      overheat: 0
+    },
+    archetypeCounts: {
+      beam: 0,
+      burn: 0,
+      snub: 0,
+      block: 0,
+      mark: 0,
+      economy: 0,
+      drone: 0,
+      overheat: 0
+    },
+    committedArchetype: null,
+    encounterCount: 0,
+    miniComboSynergyShown: false
+  };
   els.log.innerHTML = "";
 
   hideComboBanner();
@@ -3011,9 +4441,14 @@ function repairPlayerHull(amount, sourceName) {
 
 function dealAttackDamageToEnemy(baseAmount, sourceName) {
   const bonus = state.nextAttackBonus;
-  const total = baseAmount + state.player.weaponBonus + bonus;
+  const stealthMult = state.player.stealthReady ? 2 : 1;
+  const total = (baseAmount + state.player.weaponBonus + bonus) * stealthMult;
   dealDamageToEnemy(total, sourceName);
   state.attacksPlayedThisTurn += 1;
+  if (state.player.stealthReady) {
+    state.player.stealthReady = false;
+    log("Stealth strike consumed: attack damage doubled.", "system");
+  }
   if (bonus > 0) {
     log(`Attack bonus consumed: +${bonus} damage.`, "system");
     state.nextAttackBonus = 0;
@@ -3075,16 +4510,66 @@ function dealDamageToEnemy(amount, sourceName) {
 }
 
 function dealDamageToPlayer(amount, sourceName) {
+  if ((state.player.damageReductionFlat || 0) > 0) {
+    amount = Math.max(0, amount - state.player.damageReductionFlat);
+  }
   const blocked = Math.min(state.player.block, amount);
-  const hpDamage = amount - blocked;
+  let remainingDamage = amount - blocked;
+  let snubDamage = 0;
+  const playerUnitEl = document.getElementById("playerGroup");
+  const snubUnitEl = document.getElementById("snubUnit");
 
   state.player.block -= blocked;
+
+  const snub = state.selectedShipId === "exploration-vessel" ? state.player.snub : null;
+  if (snub && snub.alive && remainingDamage > 0) {
+    snubDamage = Math.min(snub.hull, remainingDamage);
+    snub.hull = Math.max(0, snub.hull - snubDamage);
+    remainingDamage -= snubDamage;
+    if (snub.hull <= 0) {
+      snub.alive = false;
+      snub.hull = 0;
+      snub.respawnCounter = 2;
+      log("Snub Fighter destroyed.", "enemy");
+    }
+  }
+
+  const hpDamage = remainingDamage;
   state.player.hull = Math.max(0, state.player.hull - hpDamage);
 
-  if (blocked > 0 && hpDamage > 0) {
-    log(`${sourceName} hits for ${amount}. You block ${blocked} and take ${hpDamage}.`, "enemy");
+  if (blocked > 0) {
+    spawnFloatingTextNearElement(playerUnitEl, `Block -${blocked}`, "block-text");
+    applyHitFlash(playerUnitEl);
+  }
+  if (snubDamage > 0) {
+    spawnFloatingTextNearElement(snubUnitEl, `-${snubDamage}`, "snub-text");
+    applyHitFlash(snubUnitEl);
+    if (state.selectedShipId === "exploration-vessel" && state.player.snub && !state.player.snub.alive) {
+      spawnFloatingTextNearElement(snubUnitEl, "Snub Destroyed", "snub-destroyed-text");
+    }
+  }
+  if (hpDamage > 0) {
+    spawnFloatingTextNearElement(playerUnitEl, `-${hpDamage}`, "damage-text");
+    applyHitFlash(playerUnitEl);
+  }
+  if (blocked > 0 || snubDamage > 0 || hpDamage > 0) {
+    applyBattlefieldShake();
+  }
+
+  if (blocked > 0 && (snubDamage > 0 || hpDamage > 0)) {
+    if (snubDamage > 0 && hpDamage > 0) {
+      log(`${sourceName} hits for ${amount}. You block ${blocked}, snub takes ${snubDamage}, you take ${hpDamage}.`, "enemy");
+    } else if (snubDamage > 0) {
+      log(`${sourceName} hits for ${amount}. You block ${blocked}, snub takes ${snubDamage}.`, "enemy");
+    } else {
+      log(`${sourceName} hits for ${amount}. You block ${blocked} and take ${hpDamage}.`, "enemy");
+    }
   } else if (blocked >= amount) {
     log(`${sourceName} hits for ${amount}, but you block it all.`, "enemy");
+  } else if (snubDamage > 0 && hpDamage > 0) {
+    log(`${sourceName} hits for ${amount}. Snub takes ${snubDamage}, you take ${hpDamage}.`, "enemy");
+  } else if (snubDamage > 0) {
+    log(`${sourceName} hits for ${amount}. Snub takes ${snubDamage}.`, "enemy");
   } else {
     log(`${sourceName} deals ${hpDamage} damage to you.`, "enemy");
   }
@@ -3134,6 +4619,8 @@ function getIntentDescription(intent) {
       return `Enemy will attack for ${intent.amount}.`;
     case "block":
       return `Enemy will gain ${intent.amount} block on its turn.`;
+    case "disrupt":
+      return "Enemy will disrupt your systems.";
     default:
       return "Unknown enemy maneuver.";
   }
@@ -3181,15 +4668,64 @@ function resolveEnemyTurn() {
       log(`${enemy.name} fortifies for 3 block.`, "enemy");
     }
 
+    if (enemy.counter === "burn-purge" && enemy.turnCounter % 2 === 0 && (enemy.burnStacks || 0) > 0) {
+      const removed = Math.min(2, enemy.burnStacks || 0);
+      enemy.burnStacks = Math.max(0, (enemy.burnStacks || 0) - removed);
+      log(`${enemy.name} vents heat and clears ${removed} Burn.`, "enemy");
+    }
+    if (enemy.counter === "mark-suppressor" && enemy.turnCounter % 2 === 0 && (enemy.markStacks || 0) > 0) {
+      enemy.markStacks = Math.max(0, (enemy.markStacks || 0) - 1);
+      log(`${enemy.name} disrupts your targeting lock.`, "enemy");
+    }
+    if (enemy.counter === "beam-dampener" && enemy.turnCounter % 2 === 0 && (enemy.beamCharge || 0) > 0) {
+      enemy.beamCharge = Math.max(0, (enemy.beamCharge || 0) - 1);
+      log(`${enemy.name} dampens Beam charge.`, "enemy");
+    }
+    if (enemy.counter === "drone-swarm" && enemy.turnCounter % 3 === 0 && (state.player.drones || 0) > 0) {
+      state.player.drones = Math.max(0, (state.player.drones || 0) - 1);
+      dealDamageToPlayer(1, `${enemy.name} flak burst`);
+      log(`${enemy.name} scatters your drone formation.`, "enemy");
+    }
+
     const intent = enemy.intent;
     if (!intent) return;
 
     switch (intent.type) {
       case "attack": {
+        animateEnemyAttack(enemy.uid);
         const reduction = enemy.attackReduction || 0;
         const finalAmount = Math.max(0, intent.amount - reduction);
         if (reduction > 0) {
           log(`${enemy.name}'s attack reduced by ${reduction}.`, "system");
+        }
+        if (enemy.counter === "block-breaker" && finalAmount > 0 && enemy.turnCounter % 2 === 0) {
+          const ignored = Math.min(2, state.player.block || 0);
+          if (ignored > 0) {
+            state.player.block = Math.max(0, state.player.block - ignored);
+            log(`${enemy.name}'s attack pierces ${ignored} block.`, "enemy");
+          }
+        }
+        if (enemy.counter === "snub-hunter" && finalAmount > 0) {
+          const snub = state.player?.snub;
+          if (snub && snub.alive) {
+            const snubHit = Math.min(2, snub.hull);
+            snub.hull = Math.max(0, snub.hull - snubHit);
+            log(`${enemy.name} targets the Snub Fighter for ${snubHit}.`, "enemy");
+            if (snub.hull <= 0) {
+              snub.alive = false;
+              snub.hull = 0;
+              snub.respawnCounter = 2;
+              log("Snub Fighter destroyed.", "enemy");
+            }
+          }
+        }
+        if (enemy.sentinelIgnoreBlockNext && finalAmount > 0) {
+          const ignored = state.player.block || 0;
+          if (ignored > 0) {
+            state.player.block = 0;
+            log(`${enemy.name} bypasses your defenses.`, "enemy");
+          }
+          enemy.sentinelIgnoreBlockNext = false;
         }
         dealDamageToPlayer(finalAmount, enemy.name);
         if (enemy.trait === "jammer" && finalAmount > 0) {
@@ -3202,6 +4738,9 @@ function resolveEnemyTurn() {
       case "block":
         gainEnemyBlock(intent.amount, enemy.name);
         break;
+      case "disrupt":
+        applySentinelDisruption(enemy);
+        break;
     }
 
     enemy.attackReduction = 0;
@@ -3213,6 +4752,43 @@ function resolveEnemyTurn() {
       log(`Mark decays on ${enemy.name}.`, "enemy");
     }
   });
+}
+
+function applySentinelDisruption(enemy) {
+  const effects = ["burn", "beam", "snub", "pierce"];
+  const choice = pickRandom(effects);
+  if (choice === "burn") {
+    const removed = Math.min(2, enemy.burnStacks || 0);
+    enemy.burnStacks = Math.max(0, (enemy.burnStacks || 0) - removed);
+    log(`${enemy.name} vents thermal residue (${removed} Burn removed).`, "enemy");
+    return;
+  }
+  if (choice === "beam") {
+    const removed = Math.min(2, enemy.beamCharge || 0);
+    enemy.beamCharge = Math.max(0, (enemy.beamCharge || 0) - removed);
+    log(`${enemy.name} scrambles beam harmonics (${removed} Beam lost).`, "enemy");
+    return;
+  }
+  if (choice === "snub") {
+    const snub = state.player?.snub;
+    if (snub && snub.alive) {
+      const hit = Math.min(2, snub.hull);
+      snub.hull = Math.max(0, snub.hull - hit);
+      log(`${enemy.name} disrupts your snub for ${hit}.`, "enemy");
+      if (snub.hull <= 0) {
+        snub.alive = false;
+        snub.hull = 0;
+        snub.respawnCounter = 2;
+        log("Snub Fighter destroyed.", "enemy");
+      }
+    } else {
+      enemy.sentinelIgnoreBlockNext = true;
+      log(`${enemy.name} primes a piercing barrage.`, "enemy");
+    }
+    return;
+  }
+  enemy.sentinelIgnoreBlockNext = true;
+  log(`${enemy.name} primes a piercing barrage.`, "enemy");
 }
 
 function handleBossBehavior(enemy) {
@@ -3266,6 +4842,18 @@ function endTurn() {
 
   resolveEnemyTurn();
 
+  state.enemies.forEach(enemy => {
+    if (enemy.hull <= 0) return;
+    const burnDamage = (enemy.burnStacks || 0) + (state.player.burnBonus || 0);
+    if (burnDamage <= 0) return;
+    enemy.hull = Math.max(0, enemy.hull - burnDamage);
+    log(`${enemy.name} suffers ${burnDamage} Burn damage.`, "system");
+  });
+
+  if (allEnemiesDead()) {
+    state.combatEnded = true;
+  }
+
   if (state.combatEnded) {
     render();
     handleCombatEnd();
@@ -3278,6 +4866,22 @@ function endTurn() {
   state.player.block = 0;
   state.nextAttackBonus = 0;
   state.attacksPlayedThisTurn = 0;
+  if (
+    state.selectedShipId === "exploration-vessel" &&
+    state.player.snub &&
+    state.player.snub.alive === false
+  ) {
+    if ((state.player.snub.respawnCounter || 0) > 0) {
+      state.player.snub.respawnCounter -= 1;
+    }
+    if ((state.player.snub.respawnCounter || 0) === 0) {
+      state.player.snub.alive = true;
+      state.player.snub.hull = 5;
+      state.player.snub.maxHull = 5;
+      state.player.snub.respawnCounter = 0;
+      log("Snub Fighter redeployed.", "system");
+    }
+  }
 
   state.player.energy = state.player.baseEnergy + state.player.reactorBonus;
 
@@ -3302,6 +4906,7 @@ function redrawHand() {
 }
 
 function handleCombatEnd() {
+  let earnedNow = 0;
   if (state.player.hull <= 0) {
     state.planetAlienAmbushCombat = false;
     state.eliteContractCombat = false;
@@ -3314,9 +4919,12 @@ function handleCombatEnd() {
     );
     return;
   }
+  if (state.run) {
+    state.run.encounterCount = (state.run.encounterCount || 0) + 1;
+  }
 
-  state.runCredits += 5;
-  log(`Cleanup bonus: +5 credits. Total credits: ${state.runCredits}.`, "system");
+  gainCredits(5, "combat cleanup bonus");
+  earnedNow += 5;
 
   const currentNode = getCurrentNode();
   if (
@@ -3333,18 +4941,26 @@ function handleCombatEnd() {
   }
 
   if (state.planetAlienAmbushCombat) {
-    state.runCredits += 20;
-    log(`Planet ambush bonus: +20 credits. Total credits: ${state.runCredits}.`, "system");
+    gainCredits(20, "planet ambush bonus");
+    earnedNow += 20;
     state.planetAlienAmbushCombat = false;
   }
 
   if (state.eliteContractCombat) {
-    state.runCredits += ELITE_CLEAR_BONUS;
-    log(`Elite contract bonus: +${ELITE_CLEAR_BONUS} credits. Total credits: ${state.runCredits}.`, "system");
+    gainCredits(ELITE_CLEAR_BONUS, "elite contract bonus");
+    earnedNow += ELITE_CLEAR_BONUS;
     state.eliteContractCombat = false;
   }
 
+  state.lastCombatCreditsEarned = earnedNow;
+
   if (state.inBossCombat) {
+    state.bossCount += 1;
+    if (!state.endlessMode && state.bossCount >= 3) {
+      state.endlessMode = true;
+      state.notoriety = 4;
+      log("Endless mode unlocked. Notoriety set to Hunted.", "system");
+    }
     state.inBossCombat = false;
     showShipUpgradeOverlay();
     return;
@@ -3402,7 +5018,7 @@ function renderHand() {
         <div class="cost">${card.cost}</div>
       </div>
       <div class="card-type">${typeLabel}</div>
-      <div class="card-text">${card.description}</div>
+      <div class="card-text">${enhanceCardDescriptionWithTooltips(card.description)}</div>
       <button ${canPlay ? "" : "disabled"}>${canPlay ? "Play Card" : "Not Enough Energy"}</button>
     `;
 
@@ -3415,6 +5031,26 @@ function renderHand() {
 
 let mapOverlayInProgress = false;
 let lastRenderedScreen = null;
+
+function ensureSnubState() {
+  if (!state.player) return;
+
+  if (state.selectedShipId === "exploration-vessel") {
+    if (!state.player.snub) {
+      state.player.snub = {
+        alive: true,
+        hull: 5,
+        maxHull: 5,
+        respawnCounter: 0
+      };
+    }
+    if (typeof state.player.snub.respawnCounter !== "number") {
+      state.player.snub.respawnCounter = 0;
+    }
+  } else {
+    state.player.snub = null;
+  }
+}
 
 function updateBackground() {
   if (state.currentScreen === "combat") {
@@ -3431,6 +5067,7 @@ function updateBackground() {
 }
 
 function render() {
+  ensureSnubState();
   updateBackground();
   if (lastRenderedScreen !== state.currentScreen) {
     window.scrollTo({ top: 0, behavior: "auto" });
@@ -3510,6 +5147,27 @@ function initStartMusic() {
   document.addEventListener("keydown", startAudio);
 }
 
+function initMuteButton() {
+  const music = document.getElementById("startMusic");
+  const muteBtn = els.muteBtn;
+  if (!muteBtn) return;
+
+  const updateMuteLabel = () => {
+    if (!music) {
+      muteBtn.textContent = "Mute";
+      return;
+    }
+    muteBtn.textContent = music.muted ? "Unmute" : "Mute";
+  };
+
+  updateMuteLabel();
+  muteBtn.addEventListener("click", () => {
+    if (!music) return;
+    music.muted = !music.muted;
+    updateMuteLabel();
+  });
+}
+
 els.restartBtn.addEventListener("click", startRun);
 els.redrawBtn.addEventListener("click", redrawHand);
 els.endTurnBtn.addEventListener("click", endTurn);
@@ -3520,4 +5178,6 @@ if (els.startRunFlowBtn) {
 }
 
 initStartMusic();
+initMuteButton();
+initTooltipSystem();
 showStartScreen();
