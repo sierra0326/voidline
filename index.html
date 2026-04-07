@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Voidline Prototype</title>
+  <title>Stellar Run</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -48,6 +48,7 @@
       <div id="mapActionArea" class="reward-options"></div>
     </section>
 
+    <div id="combatScreen" class="combat-screen">
     <section class="player-hud-section">
       <div id="playerHud" class="player-hud"></div>
     </section>
@@ -62,17 +63,17 @@
         <div class="stats-grid">
           <div class="stat-box">
             <div class="label">Ship</div>
-            <div id="shipNameText" class="value">Bounty Hunter</div>
+            <div id="shipNameText" class="value">Heavy Fighter</div>
           </div>
 
           <div class="stat-box">
             <div class="label">Passive</div>
-            <div id="shipPassiveText" class="value">Gain 15 credits after each encounter win.</div>
+            <div id="shipPassiveText" class="value">Gain credits after each encounter win.</div>
           </div>
 
           <div class="stat-box">
             <div class="label">Hull</div>
-            <div id="playerHullText" class="value">12 / 12</div>
+            <div id="playerHullText" class="value">60 / 60</div>
             <div class="bar">
               <div id="playerHullBar" class="bar-fill player-fill"></div>
             </div>
@@ -85,7 +86,7 @@
 
           <div class="stat-box">
             <div class="label">Energy</div>
-            <div id="playerEnergyText" class="value">2 / 2</div>
+            <div id="playerEnergyText" class="value">3 / 3</div>
           </div>
 
           <div class="stat-box">
@@ -110,7 +111,7 @@
 
           <div class="stat-box">
             <div class="label">Fuel</div>
-            <div id="fuelText" class="value">3</div>
+            <div id="fuelText" class="value">100</div>
           </div>
         </div>
 
@@ -135,16 +136,18 @@
     <section class="combat-header-section">
       <div class="combat-header">
         <div class="label">Encounter</div>
-        <div id="encounterInfo" class="value">1 / 3</div>
+        <div id="encounterInfo" class="value">1 / 5 • EASY • Enemies 1 / 1</div>
       </div>
     </section>
 
     <section class="battlefield-section">
-      <div id="battlefield" class="battlefield"></div>
+      <div class="battlefield-wrap">
+        <div id="battlefield" class="battlefield"></div>
+        <div id="battlefieldFloatLayer" class="battlefield-float-layer" aria-hidden="true"></div>
+      </div>
     </section>
 
     <section class="controls">
-      <button id="redrawBtn">Redraw</button>
       <button id="endTurnBtn" class="primary">End Turn</button>
     </section>
 
@@ -160,6 +163,7 @@
       <h3>Combat Log</h3>
       <div id="log" class="log"></div>
     </section>
+    </div>
 
     <div id="overlay" class="overlay hidden">
       <div class="overlay-card">
@@ -167,6 +171,25 @@
         <p id="overlayText">You won the encounter.</p>
         <div id="rewardOptions" class="reward-options hidden"></div>
         <button id="overlayBtn" class="primary">Continue</button>
+      </div>
+    </div>
+
+    <div id="miningMinigameOverlay" class="mining-minigame-overlay hidden" aria-hidden="true">
+      <div class="mining-minigame-card">
+        <h3 class="mining-minigame-title">Mining Operation</h3>
+        <p class="mining-minigame-flavor">Strike when the extractor aligns with the vein. Center band is richest ore.</p>
+        <div class="mining-track-wrap">
+          <div class="mining-track" id="miningTrack">
+            <div class="mining-zone mining-zone--good" aria-hidden="true"></div>
+            <div class="mining-zone mining-zone--perfect" aria-hidden="true"></div>
+            <div id="miningMarker" class="mining-marker"></div>
+          </div>
+        </div>
+        <p id="miningResultText" class="mining-result-text hidden" role="status"></p>
+        <div class="mining-actions">
+          <button type="button" id="miningExtractBtn" class="primary mining-btn">Extract</button>
+          <button type="button" id="miningContinueBtn" class="primary mining-btn hidden">Continue</button>
+        </div>
       </div>
     </div>
   </div>
@@ -178,5 +201,35 @@
   <div id="tooltip" class="tooltip hidden"></div>
 
   <script src="game.js"></script>
+  <script>
+    (function initStartScreenShootingStars() {
+      const startScreen = document.getElementById("startScreen");
+      const bg = document.querySelector(".start-screen-bg");
+      if (!startScreen || !bg) return;
+
+      function spawnStar() {
+        if (startScreen.classList.contains("hidden")) return;
+
+        const star = document.createElement("span");
+        star.className = "start-shooting-star";
+        star.style.setProperty("--star-left", `${Math.floor(Math.random() * 82)}%`);
+        star.style.setProperty("--star-top", `${Math.floor(Math.random() * 52)}%`);
+        star.style.setProperty("--star-size", `${3 + Math.floor(Math.random() * 2)}px`);
+        star.style.setProperty("--star-duration", `${540 + Math.floor(Math.random() * 380)}ms`);
+        bg.appendChild(star);
+        star.addEventListener("animationend", () => star.remove(), { once: true });
+      }
+
+      function loop() {
+        const delay = 1200 + Math.floor(Math.random() * 3200);
+        setTimeout(() => {
+          spawnStar();
+          loop();
+        }, delay);
+      }
+
+      loop();
+    })();
+  </script>
 </body>
 </html>

@@ -29,11 +29,13 @@ const state = {
   mapNodes: [],
   currentNodeId: null,
   visitedNodeIds: [],
+  lockedNodeIds: [],
   clearedNodeIds: [],
   currentScreen: "start",
   sectorNumber: 1,
   notoriety: 0,
   bossCount: 0,
+  bossEncounterId: null,
   endlessMode: false,
   gateUnlocked: false,
   inBossCombat: false,
@@ -41,6 +43,9 @@ const state = {
   shopInventory: [],
   selectedShipId: "heavy-fighter",
   lastCombatCreditsEarned: 0,
+  lastEncounterBucket: null,
+  rewardChoiceBonus: 0,
+  encounterCreditRewardModifier: 1,
   run: {
     archetypeBias: {
       beam: 0,
@@ -64,8 +69,16 @@ const state = {
     },
     committedArchetype: null,
     encounterCount: 0,
-    miniComboSynergyShown: false
-  }
+    miniComboSynergyShown: false,
+    commitMomentUsed: false,
+    encounterTagCounts: {},
+    fuel: 6
+  },
+  miningMinigameActive: false,
+  miningMinigamePhase: "idle",
+  miningMarkerPos: 0,
+  miningMarkerDir: 1,
+  miningRafId: null
 };
 
 const SHIP_NAME = "Bounty Hunter";
@@ -98,6 +111,22 @@ const SHIP_OPTIONS = [
   }
 ];
 
+const SHIP_FANTASY_BY_ID = {
+  "heavy-fighter": "Direct beam pressure and decisive kills",
+  "stealth-bomber": "Mark, setup, and execution timing",
+  gunship: "Tanky bruiser with defensive tempo",
+  "exploration-vessel": "Utility, snub support, and sustained control",
+  "mining-ship": "Economy engine with thermal scaling"
+};
+
+const SHIP_TRAITS_BY_ID = {
+  "heavy-fighter": ["Beam", "Burst", "Aggro"],
+  "stealth-bomber": ["Mark", "Precision", "Setup"],
+  gunship: ["Block", "Bruiser", "Sustain"],
+  "exploration-vessel": ["Snub", "Utility", "Control"],
+  "mining-ship": ["Economy", "Burn", "Scaling"]
+};
+
 function getShipDisplayName(shipId) {
   const ship = SHIP_OPTIONS.find(s => s.id === shipId);
   return ship ? ship.name : "Bounty Hunter";
@@ -122,37 +151,31 @@ function getShipStartingDeckIds(shipId) {
   const baseCore = [
     "basic-attack",
     "basic-attack",
-    "basic-attack",
-    "basic-attack",
-    "basic-attack",
-    "basic-block",
-    "basic-block",
-    "basic-block",
     "basic-block",
     "basic-block"
   ];
 
   if (shipId === "heavy-fighter") {
-    return [...baseCore, "charge-beam", "laser-pulse", "missile"];
+    return [...baseCore, "focused-beam"];
   }
 
   if (shipId === "stealth-bomber") {
-    return [...baseCore, "hunters-tag", "paint-the-target", "missile"];
+    return [...baseCore, "hunters-tag"];
   }
 
   if (shipId === "gunship") {
-    return [...baseCore, "reinforce-shields", "shield-slam", "missile"];
+    return [...baseCore, "reinforce-shields"];
   }
 
   if (shipId === "exploration-vessel") {
-    return [...baseCore, "snub-reinforce", "snub-strike", "missile"];
+    return [...baseCore, "snub-strike"];
   }
 
   if (shipId === "mining-ship") {
-    return [...baseCore, "laser-drill", "laser-alignment", "missile"];
+    return [...baseCore, "laser-drill"];
   }
 
-  return [...baseCore, "charge-beam", "laser-pulse", "missile"];
+  return [...baseCore, "focused-beam"];
 }
 
 function getShipArchetypeCardIds(shipId) {
@@ -162,8 +185,10 @@ function getShipArchetypeCardIds(shipId) {
 const BASE_CREDIT_REWARD = 10;
 const CREDIT_REWARD_STEP = 5;
 const ELITE_CLEAR_BONUS = 15;
+const CAMPAIGN_MAX_FUEL = 6;
+const SANDBOX_MAX_FUEL = 100;
 
-const RUN_LENGTH = 5;
+const RUN_LENGTH = 30;
 
 function rollNextNodeType() {
   const r = Math.random() * 100;
@@ -173,95 +198,657 @@ function rollNextNodeType() {
   return "elite";
 }
 
-function createSector1() {
-  return [
-    { id: "S", type: "start", neighbors: ["A", "B", "C"], x: 220, y: 220 },
-    { id: "A", type: "combat", danger: "easy", neighbors: ["S", "B", "D", "M"], x: 340, y: 130 },
-    { id: "B", type: "dock", neighbors: ["S", "A", "C", "E", "N"], x: 360, y: 230 },
-    { id: "C", type: "planet", neighbors: ["S", "B", "F", "O"], x: 320, y: 340 },
-    { id: "D", type: "combat", danger: "medium", neighbors: ["A", "E", "G", "P"], x: 500, y: 90 },
-    { id: "E", type: "combat", danger: "medium", neighbors: ["B", "D", "F", "G", "H", "K"], x: 540, y: 210 },
-    { id: "F", type: "combat", danger: "medium", neighbors: ["C", "E", "H", "Q"], x: 510, y: 340 },
-    { id: "G", type: "dock", neighbors: ["D", "E", "I", "P"], x: 700, y: 130 },
-    { id: "H", type: "planet", neighbors: ["E", "F", "J", "K", "Q"], x: 720, y: 300 },
-    { id: "I", type: "elite", danger: "elite", neighbors: ["G", "J"], x: 900, y: 150 },
-    { id: "J", type: "gate", neighbors: ["H", "I"], x: 950, y: 280 },
-    { id: "K", type: "shop", neighbors: ["E", "H", "N"], x: 610, y: 420 },
-    { id: "M", type: "combat", danger: "easy", neighbors: ["A", "N"], x: 450, y: 30 },
-    { id: "N", type: "planet", neighbors: ["B", "M", "K", "O"], x: 470, y: 440 },
-    { id: "O", type: "combat", danger: "medium", neighbors: ["C", "N", "Q"], x: 360, y: 500 },
-    { id: "P", type: "dock", neighbors: ["D", "G", "Q"], x: 640, y: 30 },
-    { id: "Q", type: "combat", danger: "hard", neighbors: ["F", "H", "O", "P"], x: 670, y: 500 }
-  ];
-}
+function createBranchMergeCampaignSector(sectorNum) {
+  const Y = r => 578 - r * 51;
+  const L = 290;
+  const C = 560;
+  const R = 830;
+  const p = id => `s${sectorNum}-${id}`;
+  const layout = ((Math.max(1, sectorNum) - 1) % 3) + 1;
+  const hardMode = sectorNum > 3;
 
-function createSector2() {
-  return [
-    { id: "S", type: "start", neighbors: ["A", "B", "C"], x: 220, y: 220 },
-    { id: "A", type: "combat", danger: "easy", neighbors: ["S", "B", "D", "M"], x: 330, y: 120 },
-    { id: "B", type: "combat", danger: "medium", neighbors: ["S", "A", "C", "E", "N"], x: 360, y: 220 },
-    { id: "C", type: "dock", neighbors: ["S", "B", "F", "O"], x: 330, y: 340 },
-    { id: "D", type: "planet", neighbors: ["A", "E", "G", "L", "P"], x: 500, y: 80 },
-    { id: "E", type: "combat", danger: "medium", neighbors: ["B", "D", "F", "G", "H", "K"], x: 540, y: 210 },
-    { id: "F", type: "combat", danger: "medium", neighbors: ["C", "E", "H", "Q"], x: 500, y: 340 },
-    { id: "G", type: "dock", neighbors: ["D", "E", "I", "L", "P"], x: 700, y: 120 },
-    { id: "H", type: "planet", neighbors: ["E", "F", "J", "K", "Q"], x: 710, y: 300 },
-    { id: "I", type: "elite", danger: "elite", neighbors: ["G", "J"], x: 900, y: 150 },
-    { id: "J", type: "gate", neighbors: ["H", "I"], x: 950, y: 280 },
-    { id: "K", type: "shop", neighbors: ["E", "H", "N"], x: 620, y: 420 },
-    { id: "L", type: "distress", neighbors: ["D", "G", "M"], x: 620, y: 20 },
-    { id: "M", type: "combat", danger: "easy", neighbors: ["A", "L", "P"], x: 450, y: 20 },
-    { id: "N", type: "planet", neighbors: ["B", "K", "O"], x: 460, y: 430 },
-    { id: "O", type: "combat", danger: "medium", neighbors: ["C", "N", "Q"], x: 340, y: 500 },
-    { id: "P", type: "dock", neighbors: ["D", "G", "M", "Q"], x: 640, y: 40 },
-    { id: "Q", type: "combat", danger: "hard", neighbors: ["F", "H", "O", "P"], x: 680, y: 500 }
-  ];
-}
+  const ez = () => (hardMode ? "medium" : "easy");
+  const mid = () => (hardMode ? "hard" : layout >= 2 ? "medium" : "medium");
+  const hard = () => "hard";
 
-function createSector3() {
-  return [
-    { id: "S", type: "start", neighbors: ["A", "B", "C"], x: 220, y: 220 },
-    { id: "A", type: "combat", danger: "easy", neighbors: ["S", "B", "D", "M"], x: 330, y: 120 },
-    { id: "B", type: "combat", danger: "medium", neighbors: ["S", "A", "C", "E", "N"], x: 360, y: 220 },
-    { id: "C", type: "planet", neighbors: ["S", "B", "F", "O"], x: 330, y: 340 },
-    { id: "D", type: "dock", neighbors: ["A", "E", "F", "P"], x: 500, y: 90 },
-    { id: "E", type: "combat", danger: "medium", neighbors: ["B", "D", "F", "G", "K"], x: 540, y: 210 },
-    { id: "F", type: "combat", danger: "medium", neighbors: ["C", "D", "E", "H", "Q"], x: 500, y: 330 },
-    { id: "G", type: "planet", neighbors: ["E", "I", "L", "P"], x: 700, y: 180 },
-    { id: "H", type: "dock", neighbors: ["F", "I", "J", "K", "Q"], x: 700, y: 320 },
-    { id: "I", type: "elite", danger: "elite", neighbors: ["G", "H", "J"], x: 900, y: 180 },
-    { id: "J", type: "gate", neighbors: ["H", "I", "L"], x: 960, y: 280 },
-    { id: "K", type: "shop", neighbors: ["E", "H", "N"], x: 620, y: 430 },
-    { id: "L", type: "black-market", neighbors: ["G", "J", "M"], x: 900, y: 380 },
-    { id: "M", type: "combat", danger: "easy", neighbors: ["A", "L", "P"], x: 450, y: 20 },
-    { id: "N", type: "planet", neighbors: ["B", "K", "O"], x: 460, y: 450 },
-    { id: "O", type: "combat", danger: "medium", neighbors: ["C", "N", "Q"], x: 340, y: 510 },
-    { id: "P", type: "dock", neighbors: ["D", "G", "M"], x: 650, y: 40 },
-    { id: "Q", type: "combat", danger: "hard", neighbors: ["F", "H", "O"], x: 670, y: 510 }
-  ];
-}
+  const nodes = [];
 
-function randomizeSectorNodes(nodes) {
-  const flexibleIds = ["M", "N", "O", "P", "Q"];
-  const flexibleTypes = ["combat", "combat", "planet", "dock", "shop", "distress"];
-
-  return nodes.map(node => {
-    if (!flexibleIds.includes(node.id)) return node;
-
-    const nextType = pickRandom(flexibleTypes);
-
-    if (nextType === "combat") {
-      return { ...node, type: "combat", danger: pickRandom(["easy", "medium", "hard"]) };
-    }
-
-    return { ...node, type: nextType };
+  nodes.push({ id: "S", type: "start", row: 0, neighbors: [p("n1")], x: C, y: Y(0) });
+  nodes.push({
+    id: p("n1"),
+    type: "combat",
+    danger: ez(),
+    row: 1,
+    neighbors: [p("b2a"), p("b2b"), p("b2c")],
+    x: C,
+    y: Y(1)
   });
+
+  if (layout === 1) {
+    nodes.push({ id: p("b2a"), type: "planet", row: 2, neighbors: [p("n3")], x: L, y: Y(2) });
+    nodes.push({ id: p("b2b"), type: "shop", row: 2, neighbors: [p("n3")], x: C, y: Y(2) });
+    nodes.push({ id: p("b2c"), type: "combat", danger: ez(), row: 2, neighbors: [p("n3")], x: R, y: Y(2) });
+  } else if (layout === 2) {
+    nodes.push({ id: p("b2a"), type: "combat", danger: ez(), row: 2, neighbors: [p("n3")], x: L, y: Y(2) });
+    nodes.push({ id: p("b2b"), type: "planet", row: 2, neighbors: [p("n3")], x: C, y: Y(2) });
+    nodes.push({ id: p("b2c"), type: "dock", row: 2, neighbors: [p("n3")], x: R, y: Y(2) });
+  } else {
+    nodes.push({ id: p("b2a"), type: "shop", row: 2, neighbors: [p("n3")], x: L, y: Y(2) });
+    nodes.push({ id: p("b2b"), type: "combat", danger: mid(), row: 2, neighbors: [p("n3")], x: C, y: Y(2) });
+    nodes.push({
+      id: p("b2c"),
+      type: "elite",
+      danger: "elite",
+      row: 2,
+      neighbors: [p("n3")],
+      x: R,
+      y: Y(2)
+    });
+  }
+
+  nodes.push({ id: p("n3"), type: "combat", danger: mid(), row: 3, neighbors: [p("n4")], x: C, y: Y(3) });
+  nodes.push({ id: p("n4"), type: "combat", danger: mid(), row: 4, neighbors: [p("b5a"), p("b5b"), p("b5c")], x: C, y: Y(4) });
+
+  if (layout === 1) {
+    nodes.push({ id: p("b5a"), type: "combat", danger: mid(), row: 5, neighbors: [p("n6")], x: L, y: Y(5) });
+    nodes.push({ id: p("b5b"), type: "combat", danger: hard(), row: 5, neighbors: [p("n6")], x: C, y: Y(5) });
+    nodes.push({ id: p("b5c"), type: "dock", row: 5, neighbors: [p("n6")], x: R, y: Y(5) });
+  } else if (layout === 2) {
+    nodes.push({ id: p("b5a"), type: "shop", row: 5, neighbors: [p("n6")], x: L, y: Y(5) });
+    nodes.push({ id: p("b5b"), type: "combat", danger: hard(), row: 5, neighbors: [p("n6")], x: C, y: Y(5) });
+    nodes.push({ id: p("b5c"), type: "combat", danger: hard(), row: 5, neighbors: [p("n6")], x: R, y: Y(5) });
+  } else {
+    nodes.push({ id: p("b5a"), type: "planet", row: 5, neighbors: [p("n6")], x: L, y: Y(5) });
+    nodes.push({ id: p("b5b"), type: "combat", danger: hard(), row: 5, neighbors: [p("n6")], x: C, y: Y(5) });
+    nodes.push({ id: p("b5c"), type: "dock", row: 5, neighbors: [p("n6")], x: R, y: Y(5) });
+  }
+
+  nodes.push({ id: p("n6"), type: "elite", danger: "elite", row: 6, neighbors: [p("n7")], x: C, y: Y(6) });
+  nodes.push({
+    id: p("n7"),
+    type: "combat",
+    danger: hard(),
+    row: 7,
+    neighbors: [p("b8a"), p("b8b")],
+    x: C,
+    y: Y(7)
+  });
+
+  if (layout === 1) {
+    nodes.push({ id: p("b8a"), type: "planet", row: 8, neighbors: [p("n9")], x: 420, y: Y(8) });
+    nodes.push({ id: p("b8b"), type: "combat", danger: hard(), row: 8, neighbors: [p("n9")], x: 700, y: Y(8) });
+  } else if (layout === 2) {
+    nodes.push({ id: p("b8a"), type: "dock", row: 8, neighbors: [p("n9")], x: 420, y: Y(8) });
+    nodes.push({ id: p("b8b"), type: "combat", danger: hard(), row: 8, neighbors: [p("n9")], x: 700, y: Y(8) });
+  } else {
+    nodes.push({ id: p("b8a"), type: "combat", danger: hard(), row: 8, neighbors: [p("n9")], x: 420, y: Y(8) });
+    nodes.push({ id: p("b8b"), type: "shop", row: 8, neighbors: [p("n9")], x: 700, y: Y(8) });
+  }
+
+  nodes.push({ id: p("n9"), type: "combat", danger: hard(), row: 9, neighbors: [p("n10")], x: C, y: Y(9) });
+  nodes.push({
+    id: p("n10"),
+    type: "combat",
+    danger: hard(),
+    row: 10,
+    neighbors: ["BG"],
+    x: C,
+    y: Y(10)
+  });
+  nodes.push({ id: "BG", type: "gate", row: 11, neighbors: [], x: C, y: Y(11) });
+
+  return nodes;
+}
+
+function collectAllPathsStartToBoss(nodes, startId, bossId) {
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const paths = [];
+  function walk(current, pathSoFar) {
+    if (current === bossId) {
+      paths.push([...pathSoFar, bossId]);
+      return;
+    }
+    const node = byId.get(current);
+    if (!node) return;
+    for (const next of node.neighbors || []) {
+      if (pathSoFar.includes(next)) continue;
+      walk(next, [...pathSoFar, current]);
+    }
+  }
+  walk(startId, []);
+  return paths;
+}
+
+function getLaneBossNode(nodes) {
+  const gates = nodes.filter(n => n.type === "gate");
+  if (!gates.length) return null;
+  const withRow = gates.filter(n => typeof n.row === "number");
+  if (withRow.length) {
+    const maxRow = Math.max(...withRow.map(n => n.row));
+    return gates.find(n => n.row === maxRow) || gates[0];
+  }
+  return gates[0];
+}
+
+function replacementScore(node) {
+  if (!node) return -1;
+  if (node.type === "combat") return 2;
+  if (node.type === "planet" || node.type === "dock" || node.type === "distress" || node.type === "black-market") return 1;
+  return 0;
+}
+
+function pickShopReplacementNodeId(path, bossId, byId, hasRows, bossRow) {
+  const blocked = new Set(["start", "elite", "gate", "shop"]);
+  const isReplaceable = id => {
+    const n = byId.get(id);
+    return n && !blocked.has(n.type);
+  };
+
+  let primary = [];
+  if (hasRows && bossRow != null) {
+    primary = path.filter(id => id !== bossId && isReplaceable(id)).filter(id => {
+      const n = byId.get(id);
+      return n.row === bossRow - 1 || n.row === bossRow - 2;
+    });
+  } else {
+    const bi = path.indexOf(bossId);
+    if (bi >= 1) {
+      const cands = [path[bi - 1]];
+      if (bi >= 2) cands.push(path[bi - 2]);
+      primary = cands.filter(isReplaceable);
+    }
+  }
+  primary.sort((a, b) => {
+    const s = replacementScore(byId.get(b)) - replacementScore(byId.get(a));
+    if (s !== 0) return s;
+    const na = byId.get(a);
+    const nb = byId.get(b);
+    if (na && nb && typeof na.row === "number" && typeof nb.row === "number") return nb.row - na.row;
+    return 0;
+  });
+  if (primary.length) return primary[0];
+
+  const rest = path.filter(id => id !== bossId && isReplaceable(id));
+  rest.sort((a, b) => {
+    const ra = replacementScore(byId.get(a));
+    const rb = replacementScore(byId.get(b));
+    if (rb !== ra) return rb - ra;
+    return path.indexOf(b) - path.indexOf(a);
+  });
+  return rest[0] || null;
+}
+
+function applyShopConversion(node) {
+  if (node?.id === "s1-n6") return;
+  const next = { ...node, type: "shop" };
+  delete next.danger;
+  Object.assign(node, next);
+}
+
+function ensureShopOnEveryPathToBoss(nodes) {
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const start = nodes.find(n => n.type === "start");
+  const boss = getLaneBossNode(nodes);
+  if (!start || !boss) return nodes;
+
+  const hasRows = nodes.some(n => typeof n.row === "number");
+  const bossRow = typeof boss.row === "number" ? boss.row : null;
+
+  function pathHasShop(path) {
+    return path.some(id => byId.get(id)?.type === "shop");
+  }
+
+  for (let iter = 0; iter < 64; iter++) {
+    const paths = collectAllPathsStartToBoss(nodes, start.id, boss.id);
+    const bad = paths.find(p => !pathHasShop(p));
+    if (!bad) break;
+
+    const pathId = bad.join("->");
+    const candId = pickShopReplacementNodeId(bad, boss.id, byId, hasRows, bossRow);
+    if (!candId) {
+      console.warn("[shop guarantee] no replacement candidate for path", pathId);
+      break;
+    }
+    applyShopConversion(byId.get(candId));
+    console.log("[shop guarantee]", pathId, "shop added");
+  }
+  return nodes;
+}
+
+function dockReplacementScore(node) {
+  if (!node) return -1;
+  if (node.type === "combat") return 4;
+  if (node.type === "planet" || node.type === "distress" || node.type === "black-market") return 2;
+  if (node.type === "elite") return 1;
+  return 0;
+}
+
+function pickDockReplacementNodeId(path, bossId, byId, hasRows, bossRow) {
+  const hardBlocked = new Set(["start", "gate", "shop"]);
+
+  function rowFiltered(allowElite) {
+    if (hasRows && bossRow != null) {
+      return path.filter(id => id !== bossId).filter(id => {
+        const n = byId.get(id);
+        if (!n || hardBlocked.has(n.type)) return false;
+        if (!allowElite && n.type === "elite") return false;
+        return n.row === bossRow - 1 || n.row === bossRow - 2;
+      });
+    }
+    const bi = path.indexOf(bossId);
+    if (bi < 1) return [];
+    const cands = [path[bi - 1]];
+    if (bi >= 2) cands.push(path[bi - 2]);
+    return cands.filter(id => {
+      const n = byId.get(id);
+      return n && !hardBlocked.has(n.type) && (allowElite || n.type !== "elite");
+    });
+  }
+
+  function sortAndPick(ids) {
+    const arr = [...ids];
+    arr.sort((x, y) => {
+      const s = dockReplacementScore(byId.get(y)) - dockReplacementScore(byId.get(x));
+      if (s !== 0) return s;
+      const nx = byId.get(x);
+      const ny = byId.get(y);
+      if (nx && ny && typeof nx.row === "number" && typeof ny.row === "number") return ny.row - nx.row;
+      return 0;
+    });
+    return arr[0] || null;
+  }
+
+  for (const allowElite of [false, true]) {
+    const pick = sortAndPick(rowFiltered(allowElite));
+    if (pick) return pick;
+  }
+
+  for (const allowElite of [false, true]) {
+    const rest = path.filter(id => id !== bossId).filter(id => {
+      const n = byId.get(id);
+      if (!n || hardBlocked.has(n.type)) return false;
+      if (!allowElite && n.type === "elite") return false;
+      return true;
+    });
+    rest.sort((a, b) => {
+      const ra = dockReplacementScore(byId.get(a));
+      const rb = dockReplacementScore(byId.get(b));
+      if (rb !== ra) return rb - ra;
+      return path.indexOf(b) - path.indexOf(a);
+    });
+    if (rest.length) return rest[0];
+  }
+  return null;
+}
+
+function applyDockConversion(node) {
+  if (node?.id === "s1-n6") return;
+  const next = { ...node, type: "dock" };
+  delete next.danger;
+  Object.assign(node, next);
+}
+
+function ensureDockOnEveryPathToBoss(nodes) {
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const start = nodes.find(n => n.type === "start");
+  const boss = getLaneBossNode(nodes);
+  if (!start || !boss) return nodes;
+
+  const hasRows = nodes.some(n => typeof n.row === "number");
+  const bossRow = typeof boss.row === "number" ? boss.row : null;
+
+  function pathHasDock(path) {
+    return path.some(id => byId.get(id)?.type === "dock");
+  }
+
+  for (let iter = 0; iter < 64; iter++) {
+    const paths = collectAllPathsStartToBoss(nodes, start.id, boss.id);
+    const bad = paths.find(p => !pathHasDock(p));
+    if (!bad) break;
+
+    const pathId = bad.join("->");
+    const candId = pickDockReplacementNodeId(bad, boss.id, byId, hasRows, bossRow);
+    if (!candId) {
+      console.warn("[dock guarantee] no replacement candidate for path", pathId);
+      break;
+    }
+    applyDockConversion(byId.get(candId));
+    console.log("[dock guarantee]", pathId);
+  }
+  return nodes;
+}
+
+function convertNodeToCombat(node, danger) {
+  if (node?.id === "s1-n6") return;
+  const d = danger || node.danger || pickRandom(["easy", "medium", "hard"]);
+  Object.assign(node, { ...node, type: "combat", danger: d });
+}
+
+function convertNodeToPlanet(node) {
+  if (node?.id === "s1-n6") return;
+  const next = { ...node, type: "planet" };
+  delete next.danger;
+  Object.assign(node, next);
+}
+
+function rebalanceCampaignNodeDistribution(nodes) {
+  if (!nodes.length) return nodes;
+
+  if (!nodes.some(n => typeof n.row === "number")) {
+    let combat = 0;
+    let dock = 0;
+    let shop = 0;
+    for (const n of nodes) {
+      if (n.type === "start" || n.type === "gate") continue;
+      if (n.type === "combat") combat++;
+      else if (n.type === "dock") dock++;
+      else if (n.type === "shop") shop++;
+    }
+    console.log("[node distribution]", { combat, dock, shop });
+    return nodes;
+  }
+
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const boss = getLaneBossNode(nodes);
+  const start = nodes.find(n => n.type === "start");
+  if (!boss || !start) return nodes;
+
+  const maxRow = Math.max(...nodes.map(n => (typeof n.row === "number" ? n.row : -1)));
+  const paths = collectAllPathsStartToBoss(nodes, start.id, boss.id);
+
+  function isFlexible(n) {
+    return n && n.type !== "start" && n.type !== "gate";
+  }
+
+  function tallySpecial() {
+    let combat = 0;
+    let dock = 0;
+    let shop = 0;
+    for (const n of nodes) {
+      if (!isFlexible(n)) continue;
+      if (n.type === "combat") combat++;
+      else if (n.type === "dock") dock++;
+      else if (n.type === "shop") shop++;
+    }
+    return { combat, dock, shop };
+  }
+
+  function canRemoveShopFromPaths(shopId) {
+    return paths.every(path => {
+      if (!path.includes(shopId)) return true;
+      return path.some(id => id !== shopId && byId.get(id)?.type === "shop");
+    });
+  }
+
+  function canRemoveDockFromPaths(dockId) {
+    return paths.every(path => {
+      if (!path.includes(dockId)) return true;
+      return path.some(id => id !== dockId && byId.get(id)?.type === "dock");
+    });
+  }
+
+  while (nodes.filter(n => n.type === "elite").length > 2) {
+    const elites = nodes.filter(n => n.type === "elite" && typeof n.row === "number").sort((a, b) => a.row - b.row);
+    convertNodeToCombat(elites[0], "medium");
+  }
+
+  for (const n of nodes) {
+    if (n.type !== "dock") continue;
+    for (const tid of n.neighbors || []) {
+      const t = byId.get(tid);
+      if (t && t.type === "dock" && canRemoveDockFromPaths(t.id)) {
+        convertNodeToCombat(t, "medium");
+      }
+    }
+  }
+
+  for (let ri = 0; ri <= maxRow; ri++) {
+    let docksHere = nodes.filter(n => n.row === ri && isFlexible(n) && n.type === "dock");
+    while (docksHere.length > 1) {
+      const victim = docksHere.pop();
+      if (canRemoveDockFromPaths(victim.id)) convertNodeToCombat(victim, "medium");
+      else break;
+      docksHere = nodes.filter(n => n.row === ri && isFlexible(n) && n.type === "dock");
+    }
+    let shopsHere = nodes.filter(n => n.row === ri && isFlexible(n) && n.type === "shop");
+    while (shopsHere.length > 1) {
+      const victim = shopsHere.pop();
+      if (canRemoveShopFromPaths(victim.id)) convertNodeToCombat(victim, "medium");
+      else break;
+      shopsHere = nodes.filter(n => n.row === ri && isFlexible(n) && n.type === "shop");
+    }
+  }
+
+  let shops = nodes.filter(n => n.type === "shop").sort((a, b) => b.row - a.row);
+  while (shops.length > 3) {
+    const victim = shops.find(s => canRemoveShopFromPaths(s.id));
+    if (!victim) break;
+    convertNodeToCombat(victim, "medium");
+    shops = nodes.filter(n => n.type === "shop").sort((a, b) => b.row - a.row);
+  }
+
+  let docks = nodes.filter(n => n.type === "dock").sort((a, b) => b.row - a.row);
+  while (docks.length > 3) {
+    const victim = docks.find(d => canRemoveDockFromPaths(d.id));
+    if (!victim) break;
+    convertNodeToCombat(victim, "medium");
+    docks = nodes.filter(n => n.type === "dock").sort((a, b) => b.row - a.row);
+  }
+
+  for (const s of nodes.filter(n => n.type === "shop")) {
+    for (const tid of s.neighbors || []) {
+      const t = byId.get(tid);
+      if (t && t.type === "shop" && canRemoveShopFromPaths(t.id)) {
+        convertNodeToCombat(t, "medium");
+      }
+    }
+  }
+
+  const midRow = Math.max(1, Math.floor(maxRow * 0.45));
+  let shopsEarlyMid = nodes.filter(n => n.type === "shop" && n.row <= midRow && n.row > 0);
+  while (shopsEarlyMid.length === 0 && nodes.some(n => n.type === "shop")) {
+    const late = nodes
+      .filter(n => n.type === "shop" && n.row > midRow)
+      .sort((a, b) => b.row - a.row);
+    const candidate = late.find(l => canRemoveShopFromPaths(l.id));
+    if (!candidate) break;
+    const earlyCombat = nodes.find(
+      n =>
+        n.type === "combat" &&
+        typeof n.row === "number" &&
+        n.row > 0 &&
+        n.row <= midRow &&
+        paths.some(p => p.includes(n.id))
+    );
+    if (!earlyCombat) break;
+    convertNodeToCombat(candidate, "medium");
+    applyShopConversion(earlyCombat);
+    shopsEarlyMid = nodes.filter(n => n.type === "shop" && n.row <= midRow && n.row > 0);
+  }
+
+  for (let ri = 1; ri < maxRow; ri++) {
+    const rowNodes = nodes.filter(n => n.row === ri && isFlexible(n));
+    if (!rowNodes.length) continue;
+    if (rowNodes.some(n => n.type === "combat")) continue;
+    const victim =
+      rowNodes.find(n => n.type === "planet") ||
+      rowNodes.find(n => n.type === "distress") ||
+      rowNodes.find(n => n.type === "black-market") ||
+      rowNodes.find(n => n.type === "shop") ||
+      rowNodes.find(n => n.type === "dock") ||
+      rowNodes[0];
+    if (victim) convertNodeToCombat(victim, ri <= 2 ? "easy" : "medium");
+  }
+
+  let flex = nodes.filter(isFlexible);
+  let flexCount = flex.length;
+  let combatTargetMin = Math.ceil(flexCount * 0.6);
+  let combatTargetMax = Math.floor(flexCount * 0.7);
+
+  function combatCount() {
+    return nodes.filter(n => isFlexible(n) && n.type === "combat").length;
+  }
+
+  let guard = 0;
+  while (combatCount() < combatTargetMin && guard++ < 48) {
+    const nonCombat = flex.filter(
+      n => n.type === "planet" || n.type === "distress" || n.type === "black-market"
+    );
+    if (!nonCombat.length) break;
+    nonCombat.sort((a, b) => a.row - b.row);
+    convertNodeToCombat(nonCombat[0], nonCombat[0].row <= 2 ? "easy" : "medium");
+    flex = nodes.filter(isFlexible);
+    flexCount = flex.length;
+    combatTargetMin = Math.ceil(flexCount * 0.6);
+    combatTargetMax = Math.floor(flexCount * 0.7);
+  }
+
+  guard = 0;
+  while (combatCount() > combatTargetMax && guard++ < 48) {
+    const combats = nodes.filter(n => isFlexible(n) && n.type === "combat");
+    if (!combats.length) break;
+    const byRow = new Map();
+    for (const c of combats) {
+      if (!byRow.has(c.row)) byRow.set(c.row, []);
+      byRow.get(c.row).push(c);
+    }
+    let victim = null;
+    for (const arr of byRow.values()) {
+      if (arr.length > 1) {
+        victim = arr.sort((a, b) => b.row - a.row)[0];
+        break;
+      }
+    }
+    if (!victim) break;
+    convertNodeToPlanet(victim);
+    flex = nodes.filter(isFlexible);
+    flexCount = flex.length;
+    combatTargetMax = Math.floor(flexCount * 0.7);
+  }
+
+  const t = tallySpecial();
+  console.log("[node distribution]", {
+    combat: t.combat,
+    dock: t.dock,
+    shop: t.shop
+  });
+  return nodes;
+}
+
+function finalizeCampaignLaneMap(nodes) {
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const nodeRows = nodes.map(n => (typeof n.row === "number" ? n.row : -1));
+  const maxRow = nodeRows.length ? Math.max(...nodeRows) : -1;
+  const rows = [];
+  for (let i = 0; i <= maxRow; i++) rows.push(i);
+  console.log("[map size]", rows.length, "rows");
+  const gateIds = new Set(nodes.filter(n => n.type === "gate").map(n => n.id));
+
+  const rev = new Map();
+  for (const n of nodes) {
+    for (const t of n.neighbors || []) {
+      if (!rev.has(t)) rev.set(t, []);
+      rev.get(t).push(n.id);
+    }
+  }
+
+  const fromStart = new Set();
+  const startNode = nodes.find(n => n.type === "start");
+  if (startNode) {
+    const q = [startNode.id];
+    fromStart.add(startNode.id);
+    while (q.length) {
+      const id = q.shift();
+      const n = byId.get(id);
+      if (!n) continue;
+      for (const tid of n.neighbors || []) {
+        if (!fromStart.has(tid)) {
+          fromStart.add(tid);
+          q.push(tid);
+        }
+      }
+    }
+  }
+
+  const bossId = nodes.find(n => n.type === "gate" && n.row === maxRow)?.id || [...gateIds][0];
+  const toBoss = new Set();
+  if (bossId) {
+    const q = [bossId];
+    toBoss.add(bossId);
+    while (q.length) {
+      const id = q.shift();
+      for (const pred of rev.get(id) || []) {
+        if (!toBoss.has(pred)) {
+          toBoss.add(pred);
+          q.push(pred);
+        }
+      }
+    }
+  }
+
+  for (const node of nodes) {
+    const fwd = node.neighbors || [];
+    console.log("[map validation]", "node", node.id, "forwardConnections", fwd);
+
+    const isBossLayer = gateIds.has(node.id) && node.row === maxRow;
+    if (isBossLayer) continue;
+
+    if (fwd.length === 0) {
+      console.error("[map validation] dead end (no forward)", node.id);
+    }
+    for (const tid of fwd) {
+      const t = byId.get(tid);
+      if (!t) {
+        console.error("[map validation] unknown forward id", node.id, "->", tid);
+        continue;
+      }
+      if (typeof node.row === "number" && typeof t.row === "number" && t.row !== node.row + 1) {
+        console.error("[map validation] not next row", node.id, "row", node.row, "->", tid, "row", t.row);
+      }
+    }
+    if (!fromStart.has(node.id)) {
+      console.error("[map validation] unreachable from start", node.id);
+    }
+    if (bossId && !toBoss.has(node.id)) {
+      console.error("[map validation] cannot reach boss from", node.id);
+    }
+  }
+
+  for (let ri = 0; ri <= maxRow; ri++) {
+    const rowNodes = nodes.filter(n => n.row === ri);
+    console.log("[campaign map rows]", ri, rowNodes.map(n => n.id));
+  }
+
+  ensureShopOnEveryPathToBoss(nodes);
+  ensureDockOnEveryPathToBoss(nodes);
+  rebalanceCampaignNodeDistribution(nodes);
+  ensureShopOnEveryPathToBoss(nodes);
+  ensureDockOnEveryPathToBoss(nodes);
+  return nodes;
 }
 
 function createSectorByNumber(sectorNumber) {
-  if (sectorNumber === 1) return randomizeSectorNodes(createSector1());
-  if (sectorNumber === 2) return randomizeSectorNodes(createSector2());
-  return randomizeSectorNodes(createSector3());
+  const nodes = finalizeCampaignLaneMap(createBranchMergeCampaignSector(sectorNumber));
+  if (sectorNumber === 1) {
+    const midLeftPreElite = nodes.find(n => n.id === "s1-b5a");
+    if (midLeftPreElite) {
+      midLeftPreElite.type = "shop";
+      delete midLeftPreElite.danger;
+    }
+
+    const tooEarlyShop = nodes.find(n => n.id === "s1-b2b");
+    if (tooEarlyShop) {
+      tooEarlyShop.type = "combat";
+      tooEarlyShop.danger = "easy";
+    }
+
+    const lateLeftBranch = nodes.find(n => n.id === "s1-b8a");
+    if (lateLeftBranch) {
+      lateLeftBranch.type = "planet";
+      delete lateLeftBranch.danger;
+    }
+  }
+  return nodes;
 }
 
 function getNodeById(nodeId) {
@@ -278,7 +865,7 @@ function formatNodeLabel(node) {
   if (node.type === "combat") return `Combat (${node.danger || "unknown"})`;
   if (node.type === "elite") return "Elite";
   if (node.type === "gate") {
-    return state.gateUnlocked ? "Boss Contract (Available)" : "Boss Contract (Locked)";
+    return "Boss Contract (Available)";
   }
   if (node.type === "dock") return "Dock";
   if (node.type === "planet") return "Planet";
@@ -290,6 +877,108 @@ function formatNodeLabel(node) {
 
 function isNodeVisited(nodeId) {
   return state.visitedNodeIds.includes(nodeId);
+}
+
+function isSandboxMapMode() {
+  return state.endlessMode || state.sectorNumber > 3;
+}
+
+function isCampaignLaneMovement() {
+  return state.sectorNumber <= 3 && !isSandboxMapMode();
+}
+
+function passesGuidedForwardRules(targetNodeId) {
+  const currentNode = getCurrentNode();
+  if (!currentNode) return false;
+  if (targetNodeId === state.currentNodeId) return false;
+  if (!currentNode.neighbors.includes(targetNodeId)) return false;
+
+  const target = getNodeById(targetNodeId);
+  if (!target) return false;
+
+  if (
+    isCampaignLaneMovement() &&
+    typeof currentNode.row === "number" &&
+    typeof target.row === "number" &&
+    target.row !== currentNode.row + 1
+  ) {
+    return false;
+  }
+
+  if (target.type === "dock" && isNodeVisited(targetNodeId)) {
+    return true;
+  }
+
+  if (state.lockedNodeIds.includes(targetNodeId)) {
+    return false;
+  }
+
+  if (isNodeVisited(targetNodeId)) {
+    return false;
+  }
+
+  return true;
+}
+
+const GUIDED_MAX_BRANCHES = 3;
+
+function getGuidedForwardNeighborIds() {
+  const currentNode = getCurrentNode();
+  if (!currentNode) return [];
+  const candidates = currentNode.neighbors.filter(id => passesGuidedForwardRules(id));
+  if (isCampaignLaneMovement()) return candidates;
+  if (candidates.length <= GUIDED_MAX_BRANCHES) return candidates;
+  return [...candidates].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).slice(0, GUIDED_MAX_BRANCHES);
+}
+
+const TRAVEL_LONG_EDGE_DIST = 175;
+
+function getTravelFuelCost(fromId, toId) {
+  const from = getNodeById(fromId);
+  const to = getNodeById(toId);
+  if (!from || !to) return 2;
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const longEdge = dist > TRAVEL_LONG_EDGE_DIST;
+  const specialNode = to.type === "elite" || to.type === "gate";
+  return longEdge || specialNode ? 2 : 1;
+}
+
+function syncPlayerFuelFromRun() {
+  if (state.player && state.run) {
+    state.player.fuel = state.run.fuel;
+  }
+}
+
+function applyFuelCapForRunState() {
+  if (!state.player || !state.run) return;
+  const campaign = state.sectorNumber <= 3 && !state.endlessMode;
+  state.player.maxFuel = campaign ? CAMPAIGN_MAX_FUEL : SANDBOX_MAX_FUEL;
+  state.run.fuel = Math.min(state.run.fuel, state.player.maxFuel);
+  syncPlayerFuelFromRun();
+}
+
+function applyOutOfFuelMovePenalty() {
+  const dmg = Math.max(1, Math.floor(state.player.maxHull * 0.02));
+  state.player.hull = Math.max(0, state.player.hull - dmg);
+  log("Warning: Out of fuel — hull damage sustained");
+  if (state.player.hull <= 0) {
+    showOverlay("Run Failed", "Hull breach — ship destroyed.", "Restart Run", () => startRun());
+  }
+}
+
+function canTravelToNode(targetNodeId) {
+  const currentNode = getCurrentNode();
+  if (!currentNode) return false;
+  if (targetNodeId === state.currentNodeId) return false;
+  if (!currentNode.neighbors.includes(targetNodeId)) return false;
+
+  if (isSandboxMapMode()) {
+    return true;
+  }
+
+  return getGuidedForwardNeighborIds().includes(targetNodeId);
 }
 
 function isNodeCleared(nodeId) {
@@ -319,7 +1008,17 @@ function getMapNodeTooltip(node, currentNode) {
   } else if (node.type === "combat") {
     const danger = (node.danger || "medium").toLowerCase();
     const threat = danger.charAt(0).toUpperCase() + danger.slice(1);
-    text = `Combat. Standard encounter. Threat level: ${threat}.`;
+    const pool = filterEncounterBucketsForSectorPreview(state.sectorNumber);
+    const themes = collectSoftEncounterTagsForMap(state.sectorNumber, false).slice(0, 4);
+    const themeStr = themes.length ? ` Themes: ${formatEncounterTagsList(themes)}.` : "";
+    const namesHint =
+      pool.length > 0
+        ? ` e.g. ${pool
+            .slice(0, 2)
+            .map(b => `${b.name} (${formatEncounterTagsList(b.tags)})`)
+            .join("; ")}`
+        : "";
+    text = `Combat. Threat ${threat}.${themeStr}${namesHint}.`;
   } else if (node.type === "dock") {
     text = "Dock. Repair and refuel opportunities.";
   } else if (node.type === "planet") {
@@ -327,11 +1026,19 @@ function getMapNodeTooltip(node, currentNode) {
   } else if (node.type === "shop") {
     text = "Shop. Spend credits on cards, upgrades, or services.";
   } else if (node.type === "elite") {
-    text = "Elite. Harder combat with better rewards.";
+    const pool = filterEliteBucketsForSector(state.sectorNumber);
+    const themes = collectSoftEncounterTagsForMap(state.sectorNumber, true).slice(0, 4);
+    const themeStr = themes.length ? ` Themes: ${formatEncounterTagsList(themes)}.` : "";
+    const namesHint =
+      pool.length > 0
+        ? ` e.g. ${pool
+            .slice(0, 2)
+            .map(b => `${b.name} (${formatEncounterTagsList(b.tags)})`)
+            .join("; ")}`
+        : "";
+    text = `Elite contract.${themeStr}${namesHint}.`;
   } else if (node.type === "gate") {
-    text = state.gateUnlocked
-      ? "Boss Contract. Major boss encounter with powerful rewards."
-      : "Boss Contract. Locked until the gate is opened.";
+    text = "Boss Contract. Major boss encounter with powerful rewards.";
   } else if (node.type === "distress") {
     text = "Distress Signal. Unpredictable encounter with risk and reward.";
   } else if (node.type === "black-market") {
@@ -343,13 +1050,11 @@ function getMapNodeTooltip(node, currentNode) {
   const stateNotes = [];
   if (node.id === state.currentNodeId) {
     stateNotes.push("You are here.");
-  } else if (currentNode && currentNode.neighbors.includes(node.id)) {
+  } else if (currentNode && currentNode.neighbors.includes(node.id) && canTravelToNode(node.id)) {
     stateNotes.push("Available to travel.");
   }
   if (isNodeVisited(node.id)) stateNotes.push("Previously visited.");
   if (isNodeCleared(node.id)) stateNotes.push("Encounter already completed.");
-  if (node.type === "gate" && !state.gateUnlocked) stateNotes.push("Currently locked.");
-
   return stateNotes.length ? `${text} ${stateNotes.join(" ")}` : text;
 }
 
@@ -364,7 +1069,8 @@ function getSectorProgressText() {
   const total = state.mapNodes.length;
   const visited = state.visitedNodeIds.length;
   const cleared = state.clearedNodeIds.length;
-  return `Visited ${visited} / ${total} • Cleared ${cleared} / ${total}`;
+  const ec = state.encounterIndex || 0;
+  return `Combats won ${ec} / ${RUN_LENGTH} • Sector step ${state.sectorNumber}/3 • Nodes ${visited}/${total} • Cleared ${cleared}`;
 }
 
 function getNodeSymbol(node) {
@@ -381,9 +1087,93 @@ function getNodeSymbol(node) {
   return "?";
 }
 
+function getMapNodeKindLabel(node) {
+  if (!node) return "";
+  if (node.type === "start") return "Hangar";
+  if (node.type === "combat") return "Combat";
+  if (node.type === "elite") return "Elite";
+  if (node.type === "gate") return "Boss";
+  if (node.type === "dock") return "Dock";
+  if (node.type === "planet") return "Planet";
+  if (node.type === "shop") return "Shop";
+  if (node.type === "distress") return "Distress";
+  if (node.type === "black-market") return "Black Market";
+  return node.type;
+}
+
+function getRouteIdentityForMapNode(node) {
+  if (!node || !state.mapNodes || state.mapNodes.length === 0) {
+    return { routeType: "middle", preferredTags: ["balanced", "defense", "sustain"] };
+  }
+  if (state.sectorNumber <= 3 && typeof node.x === "number") {
+    if (node.x < 395) {
+      return { routeType: "left", preferredTags: ["economy", "sustain", "swarm"] };
+    }
+    if (node.x > 625) {
+      return { routeType: "right", preferredTags: ["burst", "elite-support", "alien"] };
+    }
+    return { routeType: "middle", preferredTags: ["balanced", "defense", "sustain"] };
+  }
+  const ys = state.mapNodes.map(n => n.y);
+  const yMin = Math.min(...ys);
+  const yMax = Math.max(...ys);
+  const span = Math.max(1, yMax - yMin);
+  const t = (node.y - yMin) / span;
+  if (t < 0.34) {
+    return { routeType: "upper", preferredTags: ["burst", "swarm", "elite-support"] };
+  }
+  if (t > 0.66) {
+    return { routeType: "lower", preferredTags: ["alien", "sustain", "mixed"] };
+  }
+  return { routeType: "middle", preferredTags: ["balanced", "defense", "sustain"] };
+}
+
+function getMapNodeTagHintLine(node) {
+  const ri = getRouteIdentityForMapNode(node);
+  const tags = ri.preferredTags.slice(0, 2);
+  return tags.map(formatEncounterTagForDisplay).join(" · ");
+}
+
+function getBossRingStrokeColor() {
+  const id = state.bossEncounterId || "bastion";
+  if (id === "overloader") return "rgba(255, 150, 95, 0.9)";
+  if (id === "hive-mind") return "rgba(190, 140, 255, 0.9)";
+  return "rgba(120, 190, 255, 0.9)";
+}
+
+function getGateBossSubtitle() {
+  const id = state.bossEncounterId || "bastion";
+  if (id === "overloader") return "Burst • High Damage";
+  if (id === "hive-mind") return "Swarm • Summons";
+  return "Defense • High Armor";
+}
+
 function renderStarMapSvg() {
   const currentNode = getCurrentNode();
   if (!currentNode) return "";
+
+  const mapHasRowLayering = state.mapNodes.some(n => typeof n.row === "number");
+  const currentRow = typeof currentNode.row === "number" ? currentNode.row : null;
+  const visibleRows = [];
+  if (currentRow !== null) {
+    for (let r = currentRow; r <= currentRow + 4; r++) visibleRows.push(r);
+  }
+  console.log("[visible rows]", visibleRows);
+
+  function rowInLookaheadBand(row) {
+    if (currentRow === null || typeof row !== "number") return false;
+    return row >= currentRow && row <= currentRow + 4;
+  }
+
+  function edgeInLookaheadBand(a, b) {
+    if (!mapHasRowLayering || currentRow === null) return false;
+    const ra = typeof a.row === "number" ? a.row : null;
+    const rb = typeof b.row === "number" ? b.row : null;
+    if (ra === null || rb === null) return false;
+    const lo = Math.min(ra, rb);
+    const hi = Math.max(ra, rb);
+    return hi <= currentRow + 4 && lo >= currentRow - 1;
+  }
 
   const drawnEdges = new Set();
   const lineParts = [];
@@ -399,9 +1189,12 @@ function renderStarMapSvg() {
       if (!neighbor) continue;
 
       const isAdjacentEdge =
-        node.id === state.currentNodeId ||
-        neighborId === state.currentNodeId;
-      const edgeClass = isAdjacentEdge ? "map-edge map-edge-adjacent" : "map-edge map-edge-background";
+        (node.id === state.currentNodeId && canTravelToNode(neighborId)) ||
+        (neighborId === state.currentNodeId && canTravelToNode(node.id));
+      let edgeClass = isAdjacentEdge ? "map-edge map-edge-adjacent" : "map-edge map-edge-dim";
+      if (!isAdjacentEdge && edgeInLookaheadBand(node, neighbor)) {
+        edgeClass = "map-edge map-edge-lookahead";
+      }
 
       lineParts.push(`
         <line
@@ -419,14 +1212,14 @@ function renderStarMapSvg() {
     const isCurrent = node.id === state.currentNodeId;
     const isVisited = isNodeVisited(node.id);
     const isCleared = isNodeCleared(node.id);
-    const isAdjacent = currentNode.neighbors.includes(node.id);
+    const isAdjacent = currentNode.neighbors.includes(node.id) && canTravelToNode(node.id);
 
     let fill = "#1c2c4a";
     if (node.type === "start") fill = "#ffd166";
     if (node.type === "dock") fill = "#1f6b62";
     if (node.type === "planet") fill = "#5b4b8a";
     if (node.type === "elite") fill = "#8a2f2f";
-    if (node.type === "gate") fill = state.gateUnlocked ? "#c08b2f" : "#5f5f5f";
+    if (node.type === "gate") fill = "#c08b2f";
     if (node.type === "combat") {
       if (node.danger === "easy") fill = "#3f6ea8";
       else if (node.danger === "medium") fill = "#2f4d7a";
@@ -441,14 +1234,28 @@ function renderStarMapSvg() {
     let radius = 23;
     const isInteractive = isCurrent || isAdjacent;
     const classParts = ["star-node"];
-    const isImportant = node.type === "start" || node.type === "elite" || node.type === "gate";
     if (node.type === "start") radius = 29;
     if (node.type === "elite") radius = 27;
     if (node.type === "gate") radius = 31;
 
+    let drawRadius = radius;
+    if (isAdjacent && !isCurrent) drawRadius = radius + 4;
+
+    if (isInteractive) {
+      opacity = isCleared ? 0.9 : 1;
+    } else if (mapHasRowLayering && typeof node.row === "number" && currentRow !== null) {
+      if (node.row < currentRow) {
+        opacity = 0.38;
+      } else if (rowInLookaheadBand(node.row)) {
+        opacity = 0.82;
+      } else {
+        opacity = 0.48;
+      }
+    } else {
+      opacity = 0.48;
+    }
+
     if (isVisited) stroke = "rgba(121,188,255,0.65)";
-    if (isCleared) opacity = 0.55;
-    if (!isInteractive) opacity = Math.min(opacity, 0.58);
     if (node.type === "start") {
       stroke = "rgba(255, 230, 170, 0.95)";
       strokeWidth = 3;
@@ -458,8 +1265,8 @@ function renderStarMapSvg() {
       strokeWidth = 5;
       cursor = "pointer";
     } else if (isAdjacent) {
-      stroke = "#8fceff";
-      strokeWidth = 3.8;
+      stroke = "#b8e8ff";
+      strokeWidth = 4.2;
       cursor = "pointer";
     }
     if (isCurrent) classParts.push("is-current");
@@ -467,35 +1274,73 @@ function renderStarMapSvg() {
     if (isVisited) classParts.push("is-visited");
     if (isCleared) classParts.push("is-cleared");
     if (isInteractive) classParts.push("is-interactive");
+    if (!isInteractive) classParts.push("is-map-dimmed");
+    if (isAdjacent && !isCurrent) classParts.push("is-next-available");
     if (node.type === "start") classParts.push("is-start");
     if (node.type === "elite") classParts.push("is-elite");
     if (node.type === "gate") classParts.push("is-gate");
     if (node.type === "shop") classParts.push("is-shop");
     if (node.type === "dock") classParts.push("is-dock");
 
+    const labelY = node.y + drawRadius + 12;
+    let labelsInner = "";
+    if (node.type === "gate") {
+      const bName = getSectorBossName(state.sectorNumber);
+      const sub = getGateBossSubtitle();
+      const gatePlan =
+        mapHasRowLayering &&
+        typeof node.row === "number" &&
+        currentRow !== null &&
+        node.row >= currentRow &&
+        !isCurrent;
+      const bossFill = gatePlan ? "rgba(255, 230, 190, 0.98)" : "rgba(255, 224, 170, 0.96)";
+      const subFill = gatePlan ? "rgba(210, 225, 248, 0.94)" : "rgba(200, 215, 240, 0.88)";
+      labelsInner = `
+        <text class="star-node-map-label star-node-map-label--boss" x="${node.x}" y="${labelY}" text-anchor="middle" font-size="10" font-weight="700" fill="${bossFill}">BOSS: ${bName}</text>
+        <text class="star-node-map-label" x="${node.x}" y="${labelY + 12}" text-anchor="middle" font-size="9" fill="${subFill}">${sub}</text>
+      `;
+    } else {
+      const kind = getMapNodeKindLabel(node);
+      const tagLine = getMapNodeTagHintLine(node);
+      const isFuturePlan =
+        mapHasRowLayering &&
+        typeof node.row === "number" &&
+        currentRow !== null &&
+        node.row >= currentRow &&
+        !isCurrent;
+      const kindFill = isFuturePlan ? "rgba(228, 236, 255, 0.97)" : "rgba(215, 228, 252, 0.92)";
+      const tagFill = isFuturePlan ? "rgba(185, 210, 245, 0.92)" : "rgba(165, 195, 235, 0.78)";
+      labelsInner = `<text class="star-node-map-label" x="${node.x}" y="${labelY}" text-anchor="middle" font-size="10" fill="${kindFill}">${kind}</text>`;
+      if (tagLine) {
+        labelsInner += `<text class="star-node-map-label star-node-map-label--tags" x="${node.x}" y="${labelY + 11}" text-anchor="middle" font-size="8.5" fill="${tagFill}">${tagLine}</text>`;
+      }
+    }
+
     const tooltipText = getMapNodeTooltip(node, currentNode);
     nodeParts.push(`
       <g class="${classParts.join(" ")}" data-node-id="${node.id}" data-node-type="${node.type}" data-tooltip="${tooltipText}" data-interactive="${isInteractive ? "true" : "false"}" style="cursor:${cursor}; opacity:${opacity}">
         ${
           node.type === "gate"
-            ? `<circle class="boss-node-glow" cx="${node.x}" cy="${node.y}" r="${radius + 10}" fill="none" stroke="${state.gateUnlocked ? "rgba(255, 220, 120, 0.72)" : "rgba(220, 230, 250, 0.3)"}" stroke-width="2.4" />`
+            ? `<circle class="boss-node-glow" cx="${node.x}" cy="${node.y}" r="${drawRadius + 10}" fill="none" stroke="${
+                getBossRingStrokeColor()
+              }" stroke-width="2.4" />`
             : ""
         }
         ${
           node.type === "start"
-            ? `<circle cx="${node.x}" cy="${node.y}" r="${radius + 6}" fill="none" stroke="rgba(255, 225, 155, 0.5)" stroke-width="2.2" />`
+            ? `<circle cx="${node.x}" cy="${node.y}" r="${drawRadius + 6}" fill="none" stroke="rgba(255, 225, 155, 0.5)" stroke-width="2.2" />`
             : ""
         }
         ${
           node.type === "elite"
-            ? `<circle cx="${node.x}" cy="${node.y}" r="${radius + 5}" fill="none" stroke="rgba(255, 105, 105, 0.5)" stroke-width="2" />`
+            ? `<circle cx="${node.x}" cy="${node.y}" r="${drawRadius + 5}" fill="none" stroke="rgba(255, 105, 105, 0.5)" stroke-width="2" />`
             : ""
         }
         <circle
           class="star-node-core"
           cx="${node.x}"
           cy="${node.y}"
-          r="${radius}"
+          r="${drawRadius}"
           fill="${fill}"
           stroke="${stroke}"
           stroke-width="${strokeWidth}"
@@ -503,13 +1348,14 @@ function renderStarMapSvg() {
         <text class="star-node-symbol" x="${node.x}" y="${node.y + 6}" text-anchor="middle" font-size="18" font-weight="800" fill="#e6f0ff">
           ${getNodeSymbol(node)}
         </text>
+        ${labelsInner}
       </g>
     `);
   }
 
   return `
     <div class="star-map-shell">
-      <svg class="star-map-svg" viewBox="0 0 1120 560" width="100%" height="560" role="img" aria-label="Sector star map">
+      <svg class="star-map-svg" viewBox="0 0 1120 600" preserveAspectRatio="xMidYMid meet" width="100%" role="img" aria-label="Sector star map">
         ${lineParts.join("")}
         ${nodeParts.join("")}
       </svg>
@@ -525,22 +1371,21 @@ const TIER_MULTIPLIER = {
 };
 
 function getAllowedTiersForEncounter(encounterIndex) {
-  switch (encounterIndex) {
-    case 0:
-      return ["easy"];
-    case 1:
-      return ["easy", "medium"];
-    case 2:
-      return ["medium"];
-    case 3:
-      return ["medium", "hard"];
-    default:
-      return ["hard"];
-  }
+  const i = encounterIndex;
+  if (i <= 1) return ["easy"];
+  if (i <= 4) return ["easy", "medium"];
+  if (i <= 9) return ["medium"];
+  if (i <= 14) return ["medium", "hard"];
+  if (i <= 22) return ["hard"];
+  return ["hard", "medium"];
 }
 
 function pickRandom(array) {
   return array[Math.floor(Math.random() * array.length)];
+}
+
+function pickRandomBossEncounterId() {
+  return pickRandom(["bastion", "overloader", "hive-mind"]);
 }
 
 function formatIntentText(type, amount) {
@@ -587,16 +1432,6 @@ const SYSTEM_CARDS = [
     description: "Gain 4 block.",
     effect() {
       gainPlayerBlock(4 + state.player.shieldBonus, "Brace");
-    }
-  },
-  {
-    id: "patch-hull",
-    name: "Patch Hull",
-    type: "system",
-    cost: 1,
-    description: "Decommissioned. No effect.",
-    effect() {
-      log("Patch Hull is decommissioned and has no effect.", "system");
     }
   },
   {
@@ -960,19 +1795,8 @@ const SYSTEM_CARDS = [
         enemy.block = 0;
         log("Dead or Alive executes the target!", "system");
         showComboBanner("☠ EXECUTION");
-        if (!state.combatEnded && allBountyTargetsDead() && anyEscortAlive() && !state.pendingExtraction) {
-          showExtractionOverlay();
-          return;
-        }
-        if (allEnemiesDead()) {
-          state.combatEnded = true;
-          if (state.encounterIndex >= RUN_LENGTH - 1) {
-            state.runWon = true;
-            log("All targets eliminated. Run complete.", "system");
-          } else {
-            log("Encounter cleared.", "system");
-          }
-        }
+        resolveCombatAfterDamageIfNeeded();
+        if (state.pendingExtraction) return;
       } else {
         const dmg = 6 + mark * 2;
         dealAttackDamageToEnemy(dmg, "Dead or Alive");
@@ -1056,6 +1880,20 @@ const SYSTEM_CARDS = [
     }
   },
   {
+    id: "focused-beam",
+    name: "Focused Beam",
+    type: "system",
+    cost: 1,
+    description: "Charge +2 Beam. Deal 4 damage.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.beamCharge = (enemy.beamCharge || 0) + 2;
+      dealAttackDamageToEnemy(4, "Focused Beam");
+      log("Focused Beam builds 2 charge and hits for 4.", "system");
+    }
+  },
+  {
     id: "laser-pulse",
     name: "Laser Pulse",
     type: "system",
@@ -1073,7 +1911,7 @@ const SYSTEM_CARDS = [
     id: "full-beam",
     name: "Full Beam",
     type: "system",
-    cost: 2,
+    cost: 3,
     description: "Deal 6 damage. +4 per Beam. Consume all Beam.",
     effect() {
       const enemy = getSelectedEnemy();
@@ -1089,7 +1927,7 @@ const SYSTEM_CARDS = [
     id: "overfocus",
     name: "Overfocus",
     type: "system",
-    cost: 1,
+    cost: 2,
     description: "Double current Beam.",
     effect() {
       const enemy = getSelectedEnemy();
@@ -1696,6 +2534,185 @@ const SYSTEM_CARDS = [
       state.player.hull = Math.max(0, state.player.hull - 2);
       log("Unstable Core spikes reactor output at a cost.", "system");
     }
+  },
+  {
+    id: "ash-volley",
+    name: "Ash Volley",
+    type: "system",
+    cost: 1,
+    description: "Deal 3 damage. Apply 2 Burn.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      dealAttackDamageToEnemy(3, "Ash Volley");
+      enemy.burnStacks = (enemy.burnStacks || 0) + 2;
+      log("Ash Volley applies Burn.", "system");
+    }
+  },
+  {
+    id: "slow-burn",
+    name: "Slow Burn",
+    type: "system",
+    cost: 1,
+    description: "Apply 1 Burn. Burn deals +1 damage this combat.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.burnStacks = (enemy.burnStacks || 0) + 1;
+      state.player.burnBonus = (state.player.burnBonus || 0) + 1;
+      log("Slow Burn ramps burn damage.", "system");
+    }
+  },
+  {
+    id: "toll-booth",
+    name: "Toll Booth",
+    type: "system",
+    cost: 1,
+    description: "Gain 4 credits.",
+    effect() {
+      gainCredits(4, "Toll Booth");
+    }
+  },
+  {
+    id: "snub-screen",
+    name: "Snub Screen",
+    type: "system",
+    cost: 1,
+    description: "If Snub is active, gain 7 block. Otherwise gain 3 block.",
+    effect() {
+      const snub = state.player?.snub;
+      const bonus = state.player.shieldBonus || 0;
+      if (snub && snub.alive) {
+        gainPlayerBlock(7 + bonus, "Snub Screen");
+      } else {
+        gainPlayerBlock(3 + bonus, "Snub Screen");
+      }
+    }
+  },
+  {
+    id: "thermal-vent",
+    name: "Thermal Vent",
+    type: "system",
+    cost: 1,
+    description: "Vent up to 3 Heat. Deal 2 damage per Heat vented.",
+    effect() {
+      const heat = state.player.heat || 0;
+      const lost = Math.min(3, heat);
+      if (lost <= 0) return;
+      state.player.heat = heat - lost;
+      dealAttackDamageToEnemy(lost * 2, "Thermal Vent");
+    }
+  },
+  {
+    id: "drone-chip",
+    name: "Drone Chip",
+    type: "system",
+    cost: 1,
+    description: "Deploy 1 drone. Gain 2 credits.",
+    effect() {
+      state.player.drones = (state.player.drones || 0) + 1;
+      gainCredits(2, "Drone Chip");
+    }
+  },
+  {
+    id: "anchor-matrix",
+    name: "Anchor Matrix",
+    type: "system",
+    cost: 1,
+    description: "Gain 6 block. If you already have block, gain 4 more.",
+    effect() {
+      const hadBlock = (state.player.block || 0) > 0;
+      const amount = hadBlock ? 10 : 6;
+      gainPlayerBlock(amount + (state.player.shieldBonus || 0), "Anchor Matrix");
+      log(
+        hadBlock ? "Anchor Matrix reinforces your shields." : "Anchor Matrix projects a fresh barrier.",
+        "system"
+      );
+    }
+  },
+  {
+    id: "kinetic-redirect",
+    name: "Kinetic Redirect",
+    type: "system",
+    cost: 1,
+    description: "Deal damage equal to your Block. Your Block becomes 0.",
+    effect() {
+      const b = state.player.block || 0;
+      dealAttackDamageToEnemy(b, "Kinetic Redirect");
+      state.player.block = 0;
+      log("Kinetic Redirect converts block into a strike.", "system");
+    }
+  },
+  {
+    id: "fortified-core",
+    name: "Fortified Core",
+    type: "system",
+    cost: 1,
+    description: "Gain 4 block. Block cards gain +1 block this combat.",
+    effect() {
+      gainPlayerBlock(4 + (state.player.shieldBonus || 0), "Fortified Core");
+      state.player.shieldBonus = (state.player.shieldBonus || 0) + 1;
+      log("Fortified Core hardens your shield emitters.", "system");
+    }
+  },
+  {
+    id: "auxiliary-feed",
+    name: "Auxiliary Feed",
+    type: "system",
+    cost: 1,
+    description: "Gain 1 energy.",
+    effect() {
+      state.player.energy += 1;
+      log("Auxiliary Feed routes spare power.", "system");
+    }
+  },
+  {
+    id: "salvage-scan",
+    name: "Salvage Scan",
+    type: "system",
+    cost: 1,
+    description: "Draw 2 cards. Discard 1 random card from your hand.",
+    effect() {
+      drawCards(2);
+      if (state.hand.length === 0) return;
+      const idx = Math.floor(Math.random() * state.hand.length);
+      const [discarded] = state.hand.splice(idx, 1);
+      state.discardPile.push(discarded);
+      log(`Salvage Scan jettisons ${discarded.name}.`, "system");
+    }
+  },
+  {
+    id: "braced-strike",
+    name: "Braced Strike",
+    type: "system",
+    cost: 1,
+    description: "Gain 3 block. Deal 3 damage.",
+    effect() {
+      gainPlayerBlock(3 + (state.player.shieldBonus || 0), "Braced Strike");
+      dealAttackDamageToEnemy(3, "Braced Strike");
+    }
+  },
+  {
+    id: "black-market-stash",
+    name: "Black Market Stash",
+    type: "system",
+    cost: 1,
+    description: "Gain 4 credits.",
+    effect() {
+      gainCredits(4, "Black Market Stash");
+    }
+  },
+  {
+    id: "risk-dividend",
+    name: "Risk Dividend",
+    type: "system",
+    cost: 0,
+    description: "Gain 3 credits. Take 1 hull damage.",
+    effect() {
+      gainCredits(3, "Risk Dividend");
+      state.player.hull = Math.max(0, state.player.hull - 1);
+      log("Risk Dividend cuts into the hull for profit.", "system");
+    }
   }
 ];
 
@@ -1712,9 +2729,89 @@ const MISSILE_CARDS = [
   }
 ];
 
-const ALL_CARDS = [...SYSTEM_CARDS, ...MISSILE_CARDS];
+const NEUTRAL_CARDS = [
+  {
+    id: "quick-cycle",
+    name: "Quick Cycle",
+    category: "neutral",
+    type: "system",
+    cost: 1,
+    description: "Discard your hand. Draw the same number of cards you discarded (including this).",
+    effect() {
+      const n = state.hand.length + 1;
+      discardHand();
+      drawCards(n);
+      log("Quick Cycle clears the hand and refreshes.", "system");
+    }
+  },
+  {
+    id: "energy-surge",
+    name: "Energy Surge",
+    category: "neutral",
+    type: "system",
+    cost: 0,
+    exhaust: true,
+    description: "Gain +1 energy this turn. Exhaust.",
+    effect() {
+      state.player.energy += 1;
+      log("Energy Surge spikes reactor output (+1 energy).", "system");
+    }
+  },
+  {
+    id: "emergency-shields",
+    name: "Emergency Shields",
+    category: "neutral",
+    type: "system",
+    cost: 1,
+    description: "Gain 8 block.",
+    effect() {
+      gainPlayerBlock(8 + (state.player.shieldBonus || 0), "Emergency Shields");
+    }
+  },
+  {
+    id: "neutral-lock",
+    name: "Target Lock",
+    category: "neutral",
+    type: "system",
+    cost: 1,
+    description: "Selected enemy takes +2 damage from attacks this turn. Draw 1 card.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.extraDamageFromLockThisTurn = (enemy.extraDamageFromLockThisTurn || 0) + 2;
+      drawCards(1);
+      log(
+        `Target Lock: ${enemy.name} takes +${enemy.extraDamageFromLockThisTurn} extra per attack this turn.`,
+        "system"
+      );
+    }
+  },
+  {
+    id: "stabilize-systems",
+    name: "Stabilize Systems",
+    category: "neutral",
+    type: "system",
+    cost: 1,
+    description: "Clear disruption on your ship. Draw 1 card.",
+    effect() {
+      let cleared = false;
+      if ((state.player.damageReductionFlat || 0) > 0) {
+        state.player.damageReductionFlat = 0;
+        cleared = true;
+      }
+      drawCards(1);
+      log(
+        cleared ? "Stabilize Systems clears hull stress. Draw 1." : "Stabilize Systems: draw 1.",
+        "system"
+      );
+    }
+  }
+];
+
+const ALL_CARDS = [...SYSTEM_CARDS, ...MISSILE_CARDS, ...NEUTRAL_CARDS];
 
 const CARD_TAGS_BY_ID = {
+  "focused-beam": ["beam"],
   "charge-beam": ["beam"],
   "laser-pulse": ["beam"],
   "full-beam": ["beam", "ultra"],
@@ -1789,13 +2886,32 @@ const CARD_TAGS_BY_ID = {
   "reactor-surge": ["overheat"],
   "meltdown-protocol": ["overheat"],
   "unstable-core": ["overheat"],
+  "ash-volley": ["burn"],
+  "slow-burn": ["burn"],
+  "toll-booth": ["economy"],
+  "snub-screen": ["snub"],
+  "thermal-vent": ["overheat"],
+  "drone-chip": ["drone"],
+  "anchor-matrix": ["block"],
+  "kinetic-redirect": ["block"],
+  "fortified-core": ["block"],
+  "auxiliary-feed": ["neutral"],
+  "salvage-scan": ["neutral"],
+  "braced-strike": ["neutral"],
+  "black-market-stash": ["neutral"],
+  "risk-dividend": ["neutral"],
 
   "basic-attack": ["neutral"],
   "basic-block": ["neutral"],
   "pulse-shot": ["neutral"],
-  "patch-hull": ["neutral"],
   missile: ["neutral"],
   "debug-delete": ["neutral"],
+
+  "quick-cycle": ["neutral"],
+  "energy-surge": ["neutral"],
+  "emergency-shields": ["neutral"],
+  "neutral-lock": ["neutral"],
+  "stabilize-systems": ["neutral"],
 
   "finishing-shot": ["ultra"],
   "execution-barrage": ["ultra"]
@@ -1834,6 +2950,10 @@ function getCommittedArchetype() {
   return null;
 }
 
+const TRACKED_ARCHETYPE_TAGS = ["beam", "burn", "snub", "block", "mark", "economy", "drone", "overheat"];
+const WEAK_ARCHETYPE_TAGS = ["burn", "economy", "snub", "overheat", "drone"];
+const OFF_ARCHETYPE_POOL_CHANCE = 0.36;
+
 function getRewardPool() {
   const archetype = getShipArchetype(state.selectedShipId);
   const committed = state.run?.committedArchetype || null;
@@ -1851,14 +2971,17 @@ function getRewardPool() {
     if (tags.includes("neutral")) return true;
     if (!state.endlessMode && tags.includes("ultra") && Math.random() < 0.1) return true;
 
+    if (
+      TRACKED_ARCHETYPE_TAGS.some(t => tags.includes(t)) &&
+      !tags.includes(allowedArchetype) &&
+      !tags.includes("neutral") &&
+      Math.random() < OFF_ARCHETYPE_POOL_CHANCE
+    ) {
+      return true;
+    }
+
     return false;
   });
-}
-
-function getRewardBiasStrength(encounterIndex) {
-  if (encounterIndex <= 1) return 0.35;
-  if (encounterIndex <= 3) return 0.7;
-  return 1.05;
 }
 
 function getTimingWeightMultiplier(timing) {
@@ -1879,36 +3002,46 @@ function getTimingWeightMultiplier(timing) {
 
 function getCardRewardWeight(card) {
   const tags = card.tags || [];
-  const bias = state.run?.archetypeBias || {};
   const committed = state.run?.committedArchetype || null;
-  const scale = getRewardBiasStrength(state.encounterIndex);
-  const earlyRun = (state.run?.encounterCount || 0) <= 2;
-  const earlyDirectionWindow = (state.run?.encounterCount || 0) <= 3;
+  const encounter = state.run?.encounterCount || 0;
+  const earlyRun = encounter <= 2;
+  const earlyDirectionWindow = encounter <= 3;
   const shipArchetype = getShipArchetype(state.selectedShipId);
   let weight = 1;
 
-  tags.forEach(tag => {
-    const tagBias = bias[tag] || 0;
-    if (tagBias > 0) {
-      weight += tagBias * 0.8 * scale;
-    }
-  });
+  weight *= getArchetypeRepresentationMultiplier(card);
 
   if (committed && tags.includes(committed)) {
-    weight *= 2.4;
+    weight *= 1.58;
   }
   if (committed && tags.includes("commit") && tags.includes(committed)) {
-    weight *= 1.6;
+    weight *= 1.38;
+  }
+  if (tags.includes(shipArchetype)) {
+    weight *= 1.1;
   }
   if (earlyDirectionWindow && tags.includes(shipArchetype)) {
-    weight *= 1.2;
+    weight *= 1.08;
   }
 
-  if (earlyRun && tags.includes("neutral")) {
+  if (tags.includes(shipArchetype)) {
+    if (encounter <= 1) weight *= 1.35;
+    else if (encounter === 2) weight *= 1.15;
+  }
+
+  if (tags.includes("block") && encounter <= 2) {
+    weight *= 1.2;
+    console.log("[block bias]", card.name, weight);
+  }
+
+  if (earlyRun && tags.includes("neutral") && card.category !== "neutral") {
     weight *= 1.35;
   }
+  if (card.category === "neutral") {
+    weight *= 0.64;
+  }
   if (earlyRun && tags.includes("beam")) {
-    weight *= 0.78;
+    weight *= 0.82;
   }
   if (earlyRun) {
     const ownedCopies = (state.runDeck || []).filter(id => id === card.id).length;
@@ -1917,10 +3050,13 @@ function getCardRewardWeight(card) {
     }
   }
 
-  weight *= getArchetypeBalanceMultiplier(card);
   weight *= getTimingWeightMultiplier(card.timing);
 
-  return Math.max(0.01, weight);
+  const finalWeight = Math.max(0.01, weight);
+  if (encounter <= 2) {
+    console.log("[early bias]", card.name, encounter, finalWeight);
+  }
+  return finalWeight;
 }
 
 const MINI_COMBO_PAYOFF_IDS = new Set([
@@ -2016,27 +3152,58 @@ function applyMiniComboRewardRules(pool, picks, choiceCount) {
   return result.slice(0, choiceCount);
 }
 
-function getArchetypeBalanceMultiplier(card) {
+function getArchetypeRepresentationMultiplier(card) {
   const run = state.run;
-  if (!run || run.committedArchetype) return 1;
-  if ((run.encounterCount || 0) > 3) return 1;
+  if (!run) return 1;
   const counts = run.archetypeCounts || {};
-  const keys = ["burn", "economy", "snub", "drone", "beam", "overheat", "mark", "block"];
-  const trackedTags = (card.tags || []).filter(tag => keys.includes(tag));
-  if (trackedTags.length === 0) return 1;
+  const keys = TRACKED_ARCHETYPE_TAGS;
   const total = keys.reduce((sum, key) => sum + (counts[key] || 0), 0);
   const mean = total / keys.length;
-  const cardMean = trackedTags.reduce((sum, tag) => sum + (counts[tag] || 0), 0) / trackedTags.length;
-  const delta = mean - cardMean;
-  const adjust = Math.max(-0.12, Math.min(0.12, delta * 0.08));
-  return 1 + adjust;
+  const trackedOnCard = (card.tags || []).filter(tag => keys.includes(tag));
+  if (trackedOnCard.length === 0) return 1;
+
+  let deltaSum = 0;
+  trackedOnCard.forEach(tag => {
+    deltaSum += mean - (counts[tag] || 0);
+  });
+  const avgDelta = deltaSum / trackedOnCard.length;
+  let mult = 1 + Math.max(-0.22, Math.min(0.28, avgDelta * 0.055));
+
+  if (WEAK_ARCHETYPE_TAGS.some(w => trackedOnCard.includes(w) && (counts[w] || 0) === 0)) {
+    mult *= 1.12;
+  }
+
+  return Math.max(0.55, mult);
 }
 
 function pickWeightedRewardCards(pool, count) {
-  const available = [...pool];
+  const pickedIds = new Set();
   const picks = [];
+  let available = (pool || []).filter(c => c && c.id !== "debug-delete");
 
-  while (picks.length < count && available.length > 0) {
+  function refillFromBroadPool() {
+    const seen = new Set([...pickedIds, ...available.map(c => c.id)]);
+    for (const card of ALL_CARDS) {
+      if (!card || card.id === "debug-delete") continue;
+      if (seen.has(card.id)) continue;
+      available.push(card);
+      seen.add(card.id);
+    }
+  }
+
+  while (picks.length < count) {
+    if (available.length === 0) {
+      refillFromBroadPool();
+    }
+    if (available.length === 0) {
+      const fallback = ALL_CARDS.find(c => c && c.id !== "debug-delete");
+      if (fallback) {
+        picks.push(fallback);
+        pickedIds.add(fallback.id);
+      }
+      break;
+    }
+
     let totalWeight = 0;
     const weighted = available.map(card => {
       const weight = getCardRewardWeight(card);
@@ -2054,10 +3221,27 @@ function pickWeightedRewardCards(pool, count) {
       }
     }
 
-    picks.push(weighted[pickedIndex].card);
-    available.splice(pickedIndex, 1);
+    const picked = weighted[pickedIndex].card;
+    const pickedWeight = weighted[pickedIndex].weight;
+    const archTags = (picked.tags || []).filter(t => TRACKED_ARCHETYPE_TAGS.includes(t));
+    console.log(
+      "[reward weight]",
+      picked.name,
+      archTags.length ? archTags : picked.tags || [],
+      pickedWeight.toFixed(3)
+    );
+    picks.push(picked);
+    pickedIds.add(picked.id);
+    available = available.filter(c => c.id !== picked.id);
   }
 
+  while (picks.length < count) {
+    const fallback = ALL_CARDS.find(c => c && c.id !== "debug-delete");
+    if (!fallback) break;
+    picks.push(fallback);
+  }
+
+  console.log("[reward count]", picks.length);
   return picks;
 }
 
@@ -2098,7 +3282,6 @@ const CARD_ROLE_BY_ID = {
   "dead-or-alive": "weapon",
   missile: "weapon",
   brace: "system",
-  "patch-hull": "system",
   "reinforce-shields": "system",
   "capacitor-burst": "system",
   "debug-delete": "system",
@@ -2118,6 +3301,7 @@ const CARD_ROLE_BY_ID = {
   "signal-flare": "tactical",
   "glint-strike": "tactical",
   "hard-lock": "tactical",
+  "focused-beam": "beam",
   "charge-beam": "beam",
   "laser-pulse": "beam",
   "full-beam": "beam",
@@ -2132,7 +3316,13 @@ const CARD_ROLE_BY_ID = {
   "deploy-drone": "system",
   "swarm-command": "tactical",
   "extract-resources": "system",
-  "overclock-drill": "system"
+  "overclock-drill": "system",
+
+  "quick-cycle": "neutral",
+  "energy-surge": "neutral",
+  "emergency-shields": "neutral",
+  "neutral-lock": "neutral",
+  "stabilize-systems": "neutral"
 };
 
 function getCardCategoryLabel(card) {
@@ -2141,6 +3331,7 @@ function getCardCategoryLabel(card) {
   if (role === "tactical") return "Tactical";
   if (role === "beam") return "Beam";
   if (role === "mark") return "Mark";
+  if (role === "neutral") return "Neutral";
   return "System";
 }
 
@@ -2207,6 +3398,47 @@ const ENEMY_TYPES = [
         { type: "block", amount: 8, text: "Will gain 8 block" },
         { type: "disrupt", amount: 0, text: "Will disrupt systems" },
         { type: "attack", amount: 12, text: "Overcharge Cannon for 12" }
+      ];
+      return cycle[(turn - 1) % cycle.length];
+    }
+  },
+  {
+    id: "boss-bastion",
+    name: "Bastion",
+    difficulty: "boss",
+    maxHull: 64,
+    getIntent(turn) {
+      const cycle = [
+        { type: "attack", amount: 7, text: "Attack for 7" },
+        { type: "block", amount: 10, text: "Fortifying defenses" },
+        { type: "attack", amount: 8, text: "Attack for 8" },
+        { type: "block", amount: 18, text: "Mass fortify — large block spike" }
+      ];
+      return cycle[(turn - 1) % cycle.length];
+    }
+  },
+  {
+    id: "boss-overloader",
+    name: "Overloader",
+    difficulty: "boss",
+    maxHull: 56,
+    getIntent(turn) {
+      if (turn % 2 === 1) {
+        return { type: "block", amount: 12, text: "Charging — heavy attack next turn" };
+      }
+      return { type: "attack", amount: 13, text: "Heavy discharge" };
+    }
+  },
+  {
+    id: "boss-hive-mind",
+    name: "Hive Mind",
+    difficulty: "boss",
+    maxHull: 54,
+    getIntent(turn) {
+      const cycle = [
+        { type: "attack", amount: 6, text: "Attack for 6" },
+        { type: "attack", amount: 5, text: "Attack for 5" },
+        { type: "block", amount: 5, text: "Reinforcing swarm" }
       ];
       return cycle[(turn - 1) % cycle.length];
     }
@@ -2321,13 +3553,117 @@ const ENEMY_TYPES = [
       ];
       return cycle[(turn - 1) % cycle.length];
     }
+  },
+  {
+    id: "defender-drone",
+    name: "Defender Drone",
+    difficulty: "medium",
+    counter: "defender-share",
+    combatRole: "defender",
+    priority: "high",
+    maxHull: 22,
+    getIntent(turn) {
+      if (turn % 2 === 1) {
+        return {
+          type: "block",
+          amount: 6,
+          intentType: "self-shield",
+          textTemplate: "Self shield — gains BLOCK block"
+        };
+      }
+      return {
+        type: "ally-block",
+        amount: 6,
+        intentType: "ally-shield",
+        textTemplate: "Shield link — ally gains BLOCK block"
+      };
+    }
+  },
+  {
+    id: "burner-drone",
+    name: "Burner Drone",
+    difficulty: "easy",
+    counter: "burn-spray",
+    combatRole: "burner",
+    priority: "medium",
+    maxHull: 12,
+    getIntent(turn) {
+      return {
+        type: "attack",
+        amount: 4,
+        intentType: "burn-burst",
+        textTemplate: "Thermal burst — BLOCK damage (+2 self Burn/turn)"
+      };
+    }
+  },
+  {
+    id: "charger-drone",
+    name: "Charger Drone",
+    difficulty: "medium",
+    combatRole: "charger",
+    priority: "medium",
+    maxHull: 18,
+    getIntent(turn) {
+      if (turn % 2 === 1) {
+        return {
+          type: "block",
+          amount: 8,
+          intentType: "charging",
+          textTemplate: "Charging — gains BLOCK block (next: heavy attack)"
+        };
+      }
+      return {
+        type: "attack",
+        amount: 9,
+        intentType: "discharge",
+        textTemplate: "Discharge — BLOCK damage"
+      };
+    }
+  },
+  {
+    id: "alien-parasite",
+    name: "Alien Parasite",
+    difficulty: "medium",
+    counter: "parasite",
+    combatRole: "parasite",
+    priority: "low",
+    maxHull: 16,
+    getIntent(turn) {
+      if (turn % 2 === 1) {
+        return {
+          type: "attack",
+          amount: 5,
+          intentType: "drain",
+          textTemplate: "Drain claw — BLOCK damage (heals on hull hit)"
+        };
+      }
+      return {
+        type: "block",
+        amount: 4,
+        intentType: "brace",
+        textTemplate: "Harden shell — gains BLOCK block"
+      };
+    }
   }
 ];
+
+function pickVarietyEnemy() {
+  const ids = [
+    "defender-drone",
+    "burner-drone",
+    "charger-drone",
+    "alien-parasite",
+    "scout",
+    "raider",
+    "hunter"
+  ];
+  const pool = ids.map(id => getEnemyTypeById(id)).filter(Boolean);
+  return pool.length ? pickRandom(pool) : ENEMY_TYPES[1];
+}
 
 const els = {
   restartBtn: document.getElementById("restartBtn"),
   muteBtn: document.getElementById("muteBtn"),
-  redrawBtn: document.getElementById("redrawBtn"),
   endTurnBtn: document.getElementById("endTurnBtn"),
 
   playerHullText: document.getElementById("playerHullText"),
@@ -2374,10 +3710,17 @@ const els = {
   playerHud: document.getElementById("playerHud"),
   battlefieldSection: document.querySelector(".battlefield-section"),
   battlefield: document.getElementById("battlefield"),
+  battlefieldFloatLayer: document.getElementById("battlefieldFloatLayer"),
   combatGrid: document.querySelector(".combat-grid"),
   controls: document.querySelector(".controls"),
   handSection: document.querySelector(".hand-section"),
-  logSection: document.querySelector(".log-section")
+  logSection: document.querySelector(".log-section"),
+  combatScreen: document.getElementById("combatScreen"),
+  miningMinigameOverlay: document.getElementById("miningMinigameOverlay"),
+  miningMarker: document.getElementById("miningMarker"),
+  miningResultText: document.getElementById("miningResultText"),
+  miningExtractBtn: document.getElementById("miningExtractBtn"),
+  miningContinueBtn: document.getElementById("miningContinueBtn")
 };
 
 let comboBannerTimeout = null;
@@ -2497,16 +3840,27 @@ function renderShipSelection() {
   if (!els.shipSelectOptions) return;
 
   els.shipSelectOptions.innerHTML = "";
+  els.shipSelectOptions.classList.add("ship-select-grid");
 
   SHIP_OPTIONS.forEach(ship => {
     const btn = document.createElement("button");
-    btn.className = "reward-option";
+    btn.type = "button";
+    btn.className = `reward-option ship-select-card ship-accent-${ship.id}`;
+    const fantasy = SHIP_FANTASY_BY_ID[ship.id] || ship.description;
+    const traits = SHIP_TRAITS_BY_ID[ship.id] || [];
     btn.innerHTML = `
-      <div class="reward-name">${ship.name}</div>
-      <div class="reward-meta">${ship.description}</div>
+      <div class="ship-select-head">
+        <div class="reward-name">${ship.name}</div>
+        <div class="reward-meta ship-role">${fantasy}</div>
+      </div>
+      <div class="ship-trait-row">
+        ${traits.map(t => `<span class="ship-trait-pill">${t}</span>`).join("")}
+      </div>
+      <div class="reward-meta ship-secondary">${ship.description}</div>
     `;
     btn.addEventListener("click", () => {
-      startRun(ship.id);
+      btn.classList.add("is-selected");
+      setTimeout(() => startRun(ship.id), 90);
     });
     els.shipSelectOptions.appendChild(btn);
   });
@@ -2620,7 +3974,6 @@ function renderBattlefield() {
       ? `<div class="player-laser" data-tooltip="${TOOLTIP_TEXT.laser}">Laser: ${playerLaserAmount}</div>`
       : "";
   const snub = state.selectedShipId === "exploration-vessel" ? state.player.snub : null;
-  console.log("SNUB DEBUG", state.selectedShipId, state.player?.snub);
   const snubHullPct =
     snub && snub.maxHull > 0 ? Math.max(0, Math.min(100, (snub.hull / snub.maxHull) * 100)) : 0;
   const snubStatusText = snub
@@ -2634,6 +3987,7 @@ function renderBattlefield() {
     ? `
       <div id="snubUnit" class="snub-unit ${snub.alive ? "" : "destroyed"}">
         <div class="snub-label" data-tooltip="${TOOLTIP_TEXT.snub}">Snub Fighter</div>
+        <div class="snub-ship-wrap" aria-hidden="true"><div class="ship-sprite ship-sprite--snub"></div></div>
         <div class="unit-hull snub-hull">
           <div class="bar">
             <div class="bar-fill player-fill" style="width: ${snubHullPct}%"></div>
@@ -2666,8 +4020,10 @@ function renderBattlefield() {
       const roleHtml = enemy.role === "bounty" ? `<div class="unit-mini-badge role">BOUNTY</div>` : `<div class="unit-mini-badge role escort">ESCORT</div>`;
       const eliteHtml = enemy.difficulty === "elite" ? `<div class="unit-mini-badge elite">ELITE</div>` : "";
       const bossHtml = enemy.bossType ? `<div class="unit-mini-badge boss">BOSS</div>` : "";
+      const enemyTier = enemy.bossType ? "boss" : enemy.difficulty === "elite" ? "elite" : "normal";
 
       return `
+        <div class="enemy-lane">
         <div class="enemy-unit${selectedClass}${destroyedClass}" data-enemy-uid="${enemy.uid}">
           <div class="enemy-intent-badge">${intentText}</div>
           <div class="enemy-meta-badges">
@@ -2678,7 +4034,7 @@ function renderBattlefield() {
             ${markHtml}
             ${beamHtml}
           </div>
-          <div class="enemy-silhouette">${getNodeSymbol({ type: "combat" })}</div>
+          <div class="enemy-silhouette" aria-hidden="true"><div class="ship-sprite ship-sprite--enemy" data-tier="${enemyTier}"></div></div>
           <div class="enemy-name">${enemy.name}</div>
           <div class="unit-hull">
             <div class="bar">
@@ -2690,31 +4046,103 @@ function renderBattlefield() {
           ${enemyBurnHtml}
           ${isSelected ? `<div class="unit-targeted">TARGETED</div>` : ""}
         </div>
+        </div>
       `;
     })
     .join("");
 
+  const aliveEnemies = getAliveEnemies().length;
+  const clearedHint =
+    state.combatEnded && aliveEnemies === 0 && state.enemies.length > 0
+      ? `<div class="battlefield-cleared-hint" role="status">Hostiles neutralized</div>`
+      : "";
+
   els.battlefield.innerHTML = `
-    <div id="playerGroup" class="player-group">
-      <div id="playerUnit" class="player-unit">
-        <div class="player-ship-name">${getShipDisplayName(state.selectedShipId)}</div>
-        <div class="player-energy">⚡ ${state.player.energy} / ${playerEnergyMax}</div>
-        <img src="./assets/images/player_ship.png" class="ship-img" />
-        <div class="unit-hull">
-          <div class="bar">
-            <div class="bar-fill player-fill" style="width: ${playerHullPct}%"></div>
+    <div class="battlefield-stage battlefield-stage--compact">
+      <div class="player-zone">
+        <div class="zone-label zone-label--player">Your ship</div>
+        <div id="playerGroup" class="player-group">
+          <div id="playerUnit" class="player-unit">
+            <div class="player-ship-name">${getShipDisplayName(state.selectedShipId)}</div>
+            <div class="player-energy">⚡ ${state.player.energy} / ${playerEnergyMax}</div>
+            <div class="player-ship-visual" aria-hidden="true">
+              <div class="ship-sprite ship-sprite--player" data-ship="${state.selectedShipId}"></div>
+            </div>
+            <div class="unit-hull">
+              <div class="bar">
+                <div class="bar-fill player-fill" style="width: ${playerHullPct}%"></div>
+              </div>
+              <div class="unit-hull-text">${state.player.hull} / ${state.player.maxHull}</div>
+            </div>
+            ${playerLaserHtml}
+            ${playerBlockHtml}
           </div>
-          <div class="unit-hull-text">${state.player.hull} / ${state.player.maxHull}</div>
+          ${snubHtml}
         </div>
-      ${playerLaserHtml}
-        ${playerBlockHtml}
       </div>
-      ${snubHtml}
-    </div>
-    <div class="enemy-units-wrap">
-      ${enemiesHtml}
+      <div class="enemy-zone">
+        <div class="zone-label zone-label--hostile">Hostiles</div>
+        <div class="enemy-units-wrap">
+          ${clearedHint}
+          ${enemiesHtml}
+        </div>
+      </div>
     </div>
   `;
+
+  const enemyEls = els.battlefield.querySelectorAll(".enemy-unit[data-enemy-uid]");
+  enemyEls.forEach(enemyEl => {
+    const enemyUid = enemyEl.dataset.enemyUid;
+    if (!enemyUid) return;
+    enemyEl.addEventListener("dragover", event => {
+      if (!draggingTargetedCardUid) return;
+      event.preventDefault();
+      enemyEl.classList.add("drop-over");
+      enemyEl.classList.add("target-lock");
+      draggingTargetHoverEnemyUid = enemyUid;
+    });
+    enemyEl.addEventListener("dragleave", () => {
+      enemyEl.classList.remove("drop-over");
+      enemyEl.classList.remove("target-lock");
+      if (draggingTargetHoverEnemyUid === enemyUid) draggingTargetHoverEnemyUid = null;
+    });
+    enemyEl.addEventListener("drop", event => {
+      event.preventDefault();
+      enemyEl.classList.remove("drop-over");
+      enemyEl.classList.remove("target-lock");
+      if (!draggingTargetedCardUid) return;
+      applyEnemyDamageFlash(enemyEl);
+      enemyEl.classList.remove("enemy-hit-shake");
+      void enemyEl.offsetWidth;
+      enemyEl.classList.add("enemy-hit-shake");
+      setTimeout(() => enemyEl.classList.remove("enemy-hit-shake"), 300);
+      playCardOnEnemy(draggingTargetedCardUid, enemyUid);
+      clearDragTargetingState();
+    });
+  });
+
+  const playerGroup = document.getElementById("playerGroup");
+  if (playerGroup) {
+    playerGroup.addEventListener("dragover", event => {
+      if (!draggingPlayerCardUid) return;
+      event.preventDefault();
+      playerGroup.classList.add("drop-over");
+      playerGroup.classList.add("target-lock");
+    });
+    playerGroup.addEventListener("dragleave", () => {
+      playerGroup.classList.remove("drop-over");
+      playerGroup.classList.remove("target-lock");
+    });
+    playerGroup.addEventListener("drop", event => {
+      event.preventDefault();
+      playerGroup.classList.remove("drop-over");
+      playerGroup.classList.remove("target-lock");
+      if (!draggingPlayerCardUid) return;
+      applyHitFlash(playerGroup);
+      playCardOnPlayer(draggingPlayerCardUid);
+      clearDragTargetingState();
+    });
+  }
 }
 
 function renderPlayerHud() {
@@ -2723,7 +4151,7 @@ function renderPlayerHud() {
     typeof state.player.credits === "number" ? state.player.credits : state.runCredits;
 
   els.playerHud.innerHTML = `
-    <div class="hud-pill hud-resource">Fuel ${state.player.fuel}</div>
+    <div class="hud-pill hud-resource">Fuel ${state.run.fuel}</div>
     <div class="hud-pill hud-resource resource-credits">$ Credits ${creditsValue}</div>
     <div class="hud-pill hud-resource">Draw ${state.drawPile.length}</div>
     <div class="hud-pill hud-resource">Discard ${state.discardPile.length}</div>
@@ -2772,25 +4200,31 @@ function log(message, type = "") {
   els.log.prepend(entry);
 }
 
+function getBattlefieldFloatParent() {
+  return els.battlefieldFloatLayer || els.battlefield;
+}
+
 function spawnFloatingText(text, x, y, className = "") {
-  if (!els.battlefield) return;
+  const parent = getBattlefieldFloatParent();
+  if (!parent) return;
   const el = document.createElement("div");
   el.className = `combat-float-text float-up ${className}`.trim();
   el.textContent = text;
   el.style.left = `${x}px`;
   el.style.top = `${y}px`;
-  els.battlefield.appendChild(el);
+  parent.appendChild(el);
   setTimeout(() => {
     if (el.parentNode) el.parentNode.removeChild(el);
-  }, 850);
+  }, 1040);
 }
 
 function spawnFloatingTextNearElement(targetEl, text, className = "") {
-  if (!els.battlefield || !targetEl) return;
-  const battlefieldRect = els.battlefield.getBoundingClientRect();
+  const parent = getBattlefieldFloatParent();
+  if (!parent || !targetEl) return;
+  const anchorRect = parent.getBoundingClientRect();
   const targetRect = targetEl.getBoundingClientRect();
-  const x = targetRect.left - battlefieldRect.left + targetRect.width * 0.5;
-  const y = targetRect.top - battlefieldRect.top + 12;
+  const x = targetRect.left - anchorRect.left + targetRect.width * 0.5;
+  const y = targetRect.top - anchorRect.top - 14;
   spawnFloatingText(text, x, y, className);
 }
 
@@ -2823,12 +4257,38 @@ function applyHitFlash(targetEl) {
   setTimeout(() => targetEl.classList.remove("hit-flash"), 120);
 }
 
+function applyEnemyDamageFlash(targetEl) {
+  if (!targetEl) return;
+  targetEl.classList.remove("enemy-damage-flash");
+  void targetEl.offsetWidth;
+  targetEl.classList.add("enemy-damage-flash");
+  setTimeout(() => targetEl.classList.remove("enemy-damage-flash"), 220);
+}
+
+function applyPlayerBlockFlash() {
+  const el = document.getElementById("playerGroup");
+  if (!el) return;
+  el.classList.remove("player-block-flash");
+  void el.offsetWidth;
+  el.classList.add("player-block-flash");
+  setTimeout(() => el.classList.remove("player-block-flash"), 480);
+}
+
 function applyBattlefieldShake() {
-  if (!els.battlefield) return;
-  els.battlefield.classList.remove("screen-shake");
-  void els.battlefield.offsetWidth;
-  els.battlefield.classList.add("screen-shake");
-  setTimeout(() => els.battlefield.classList.remove("screen-shake"), 200);
+  const shakeEl = document.querySelector(".battlefield-wrap") || els.battlefield;
+  if (!shakeEl) return;
+  shakeEl.classList.remove("screen-shake");
+  void shakeEl.offsetWidth;
+  shakeEl.classList.add("screen-shake");
+  setTimeout(() => shakeEl.classList.remove("screen-shake"), 200);
+}
+
+function applyCombatCardPlayJuice() {
+  if (!els.combatScreen) return;
+  els.combatScreen.classList.remove("combat-card-flash");
+  void els.combatScreen.offsetWidth;
+  els.combatScreen.classList.add("combat-card-flash");
+  setTimeout(() => els.combatScreen.classList.remove("combat-card-flash"), 260);
 }
 
 function animateEnemyAttack(enemyUid) {
@@ -2841,8 +4301,73 @@ function animateEnemyAttack(enemyUid) {
   setTimeout(() => enemyEl.classList.remove("enemy-attack-lunge"), 170);
 }
 
+function enemyHullValue(enemy) {
+  const h = Number(enemy?.hull);
+  return Number.isFinite(h) ? h : 0;
+}
+
 function getAliveEnemies() {
-  return state.enemies.filter(e => e.hull > 0);
+  return state.enemies.filter(e => enemyHullValue(e) > 0);
+}
+
+function pickAllyBlockTarget(defender, alive) {
+  const others = alive.filter(e => e.uid !== defender.uid && e.hull > 0);
+  if (others.length === 0) return null;
+  const chargerCharging = others.find(
+    e => e.combatRole === "charger" && e.intent && e.intent.intentType === "charging"
+  );
+  if (chargerCharging) {
+    console.log("[enemy synergy]", defender.name, "with", chargerCharging.name);
+    return chargerCharging;
+  }
+  const parasite = others.find(e => e.combatRole === "parasite");
+  if (parasite) {
+    console.log("[enemy synergy]", defender.name, "with", parasite.name);
+    return parasite;
+  }
+  return others[0];
+}
+
+function getEnemySynergyAttackBonus(enemy, alive, intent) {
+  let bonus = 0;
+  const burner = alive.find(e => e.combatRole === "burner" && e.hull > 0);
+  const parasite = alive.find(e => e.combatRole === "parasite" && e.hull > 0);
+  const charger = alive.find(e => e.combatRole === "charger" && e.hull > 0);
+  const suppressChargerBurstSynergy = state.sectorNumber === 1 && state.encounterIndex <= 4;
+
+  if (enemy.combatRole === "parasite" && burner) {
+    bonus += 1;
+    log(`${enemy.name} exploits allied heat (+1 damage).`, "enemy");
+    console.log("[enemy synergy]", enemy.name, "with", burner.name);
+  }
+  if (enemy.combatRole === "burner" && parasite) {
+    bonus += 1;
+    log(`${enemy.name} flares with spore support (+1 damage).`, "enemy");
+    console.log("[enemy synergy]", enemy.name, "with", parasite.name);
+  }
+  if (
+    enemy.combatRole === "charger" &&
+    intent &&
+    intent.intentType === "discharge" &&
+    burner &&
+    !suppressChargerBurstSynergy
+  ) {
+    bonus += 1;
+    log(`${enemy.name} couples discharge with Burner (+1 damage).`, "enemy");
+    console.log("[enemy synergy]", enemy.name, "with", burner.name);
+  }
+  if (
+    enemy.combatRole === "burner" &&
+    charger &&
+    charger.intent &&
+    charger.intent.intentType === "charging" &&
+    !suppressChargerBurstSynergy
+  ) {
+    bonus += 1;
+    log(`${enemy.name} ramps while Charger charges (+1 damage).`, "enemy");
+    console.log("[enemy synergy]", enemy.name, "with", charger.name);
+  }
+  return bonus;
 }
 
 function getEnemyByUid(uid) {
@@ -2857,15 +4382,14 @@ function getDefaultTargetUid() {
 
 function getSelectedEnemy() {
   const selected = state.selectedEnemyUid ? getEnemyByUid(state.selectedEnemyUid) : null;
-  if (selected && selected.hull > 0) return selected;
-  const fallbackUid = getDefaultTargetUid();
-  if (fallbackUid) state.selectedEnemyUid = fallbackUid;
-  return fallbackUid ? getEnemyByUid(fallbackUid) : null;
+  if (selected && enemyHullValue(selected) > 0) return selected;
+  state.selectedEnemyUid = null;
+  return null;
 }
 
 function selectEnemy(uid) {
   const enemy = getEnemyByUid(uid);
-  if (!enemy || enemy.hull <= 0) return;
+  if (!enemy || enemyHullValue(enemy) <= 0) return;
   state.selectedEnemyUid = uid;
   render();
 }
@@ -2876,21 +4400,41 @@ function getBountyTargets() {
 
 function allBountyTargetsDead() {
   const bounty = getBountyTargets();
-  return bounty.length > 0 && bounty.every(e => e.hull <= 0);
+  return bounty.length > 0 && bounty.every(e => enemyHullValue(e) <= 0);
 }
 
 function anyEscortAlive() {
-  return state.enemies.some(e => e.role === "escort" && e.hull > 0);
+  return state.enemies.some(e => e.role === "escort" && enemyHullValue(e) > 0);
 }
 
 function allEnemiesDead() {
-  return state.enemies.length > 0 && state.enemies.every(e => e.hull <= 0);
+  return state.enemies.length > 0 && state.enemies.every(e => enemyHullValue(e) <= 0);
+}
+
+function resolveCombatAfterDamageIfNeeded() {
+  if (state.combatEnded) return;
+  if (!state.enemies.length) return;
+
+  if (allBountyTargetsDead() && anyEscortAlive() && !state.pendingExtraction) {
+    showExtractionOverlay();
+    return;
+  }
+  if (allEnemiesDead()) {
+    state.combatEnded = true;
+    if (state.encounterIndex >= RUN_LENGTH - 1) {
+      state.runWon = true;
+      log("All targets eliminated. Run complete.", "system");
+    } else {
+      log("Encounter cleared.", "system");
+    }
+  }
 }
 
 function hideOverlay() {
   els.overlay.classList.add("hidden");
   els.rewardOptions.innerHTML = "";
   els.rewardOptions.classList.add("hidden");
+  els.rewardOptions.classList.remove("reward-card-grid");
   els.overlayBtn.classList.remove("hidden");
 }
 
@@ -2914,18 +4458,46 @@ function getEncounterTierLabel(index) {
 }
 
 function awardEncounterCredits() {
-  const amount = getCreditRewardForEncounter(state.encounterIndex);
+  let amount = getCreditRewardForEncounter(state.encounterIndex);
+  const mult = state.encounterCreditRewardModifier || 1;
+  if (mult !== 1) {
+    const before = amount;
+    amount = Math.max(1, Math.floor(amount * mult));
+    log(
+      `Encounter bonus: Contract terms favor you (credit reward ${before} → ${amount}).`,
+      "system"
+    );
+  }
   gainCredits(amount, "encounter reward");
+  state.encounterCreditRewardModifier = 1;
 }
 
 function buildRewardChoices() {
   const pool = getRewardPool();
-  const choiceCount = (state.run?.encounterCount || 0) <= 2 ? 2 : 3;
+  const choiceCount = 3 + (state.rewardChoiceBonus || 0);
   const weightedPicks = pickWeightedRewardCards(pool, choiceCount);
-  const finalPicks = applyMiniComboRewardRules(pool, weightedPicks, choiceCount);
+  let finalPicks = applyMiniComboRewardRules(pool, weightedPicks, choiceCount);
+  if (finalPicks.length < choiceCount) {
+    const ids = new Set(finalPicks.map(c => c.id));
+    const broad = ALL_CARDS.filter(c => c && c.id !== "debug-delete");
+    for (const card of broad) {
+      if (finalPicks.length >= choiceCount) break;
+      if (!ids.has(card.id)) {
+        finalPicks.push(card);
+        ids.add(card.id);
+      }
+    }
+    while (finalPicks.length < choiceCount) {
+      const fb = ALL_CARDS.find(c => c && c.id !== "debug-delete");
+      if (!fb) break;
+      finalPicks.push(fb);
+    }
+    finalPicks = finalPicks.slice(0, choiceCount);
+  }
   console.log("REWARD SHIP:", state.selectedShipId);
   console.log("REWARD ARCHETYPE:", getShipArchetype(state.selectedShipId));
   console.log("REWARD POOL IDS:", pool.map(card => card.id));
+  state.rewardChoiceBonus = 0;
   return finalPicks.map(card => card.id);
 }
 
@@ -2952,7 +4524,11 @@ function showMapOverlay() {
   state.pendingReward = true;
 
   els.overlayTitle.textContent = `Star Map — Sector ${state.sectorNumber} — Notoriety: ${getNotorietyLabel(state.notoriety)}`;
-  els.overlayText.textContent = `Current Node: ${currentNode.id} • ${formatNodeLabel(currentNode)}${formatNodeStatus(currentNode)} • Fuel: ${state.player.fuel} • ${getSectorProgressText()}`;
+  const encPreviewLine =
+    (currentNode.type === "combat" || currentNode.type === "elite") && !isNodeCleared(currentNode.id)
+      ? `\n${getSoftEncounterPreviewLine(state.sectorNumber, currentNode.type === "elite")}`
+      : "";
+  els.overlayText.textContent = `Current Node: ${currentNode.id} • ${formatNodeLabel(currentNode)}${formatNodeStatus(currentNode)} • Fuel: ${state.run.fuel} • ${getSectorProgressText()}${encPreviewLine}`;
   els.overlayBtn.classList.add("hidden");
   els.rewardOptions.innerHTML = "";
   els.rewardOptions.classList.remove("hidden");
@@ -2992,7 +4568,7 @@ function showMapOverlay() {
     }
 
     const currentNode = getCurrentNode();
-    if (currentNode && currentNode.neighbors.includes(nodeId)) {
+    if (currentNode && currentNode.neighbors.includes(nodeId) && canTravelToNode(nodeId)) {
       nodeEl.addEventListener("click", () => travelToNode(nodeId));
     }
   });
@@ -3009,7 +4585,7 @@ function renderMapScreen() {
 
   if (!els.mapTitleText || !els.mapSubtitleText || !els.mapCurrentInfo || !els.mapSvgWrap || !els.mapActionArea) return;
 
-  els.mapTitleText.textContent = `Star Map — Sector ${state.sectorNumber}`;
+  els.mapTitleText.textContent = `Campaign — Sector ${state.sectorNumber} / 3 • Boss checkpoint at each sector gate`;
   const notorietyTooltip =
     getNotorietyLabel(state.notoriety) === "Hunted"
       ? "Hunted: powerful enemies are now actively pursuing you in endless mode."
@@ -3017,7 +4593,7 @@ function renderMapScreen() {
   els.mapSubtitleText.innerHTML = `
     <span class="map-hud-tip" data-tooltip="${notorietyTooltip}">Notoriety: ${getNotorietyLabel(state.notoriety)}</span>
     •
-    <span class="map-hud-tip" data-tooltip="Fuel is used to travel between map nodes.">Fuel: ${state.player.fuel}</span>
+    <span class="map-hud-tip" data-tooltip="Fuel is used to travel between map nodes.">Fuel: ${state.run.fuel}</span>
     •
     <span class="map-hud-tip" data-tooltip="Credits are spent at Shops and other special services.">Credits: ${state.runCredits}</span>
     •
@@ -3027,15 +4603,14 @@ function renderMapScreen() {
   const gateStateHtml =
     currentNode.type === "gate"
       ? `<div class="reward-meta"><span class="map-hud-tip" data-tooltip="${
-          state.gateUnlocked
-            ? "Boss Contract is available. Defeating the boss grants major rewards."
-            : "Boss Contract is locked until the required sector progress or gate condition is met."
-        }">Boss Contract Status: ${state.gateUnlocked ? "Unlocked" : "Locked"}</span></div>`
+          "Boss Contract is available. Defeating the boss grants major rewards."
+        }">Boss Contract Status: Available</span></div>`
       : "";
 
   els.mapCurrentInfo.innerHTML = `
     <div class="reward-name">Current Location</div>
     <div class="reward-meta">Node ${currentNode.id} • ${formatNodeLabel(currentNode)}${formatNodeStatus(currentNode)}</div>
+    ${getEncounterMapFlavorHtml(currentNode)}
     ${gateStateHtml}
     <div class="reward-meta"><span class="map-hud-tip" data-tooltip="Credits are spent at Shops and other special services.">Credits: ${state.runCredits}</span></div>
   `;
@@ -3048,7 +4623,18 @@ function renderMapScreen() {
   engageButton.className = "reward-option";
   engageButton.innerHTML = `
     <div class="reward-name">Engage Current Node</div>
-    <div class="reward-meta">${formatNodeLabel(currentNode)}${formatNodeStatus(currentNode)}</div>
+    <div class="reward-meta">${formatNodeLabel(currentNode)}${formatNodeStatus(currentNode)}${
+    (() => {
+      if (
+        (currentNode.type !== "combat" && currentNode.type !== "elite") ||
+        isNodeCleared(currentNode.id)
+      ) {
+        return "";
+      }
+      const line = getSoftEncounterPreviewLine(state.sectorNumber, currentNode.type === "elite");
+      return line ? ` • ${line}` : "";
+    })()
+  }</div>
   `;
   engageButton.addEventListener("click", () => resolveCurrentNode());
   els.mapActionArea.appendChild(engageButton);
@@ -3072,7 +4658,7 @@ function renderMapScreen() {
     }
 
     const current = getCurrentNode();
-    if (current && current.neighbors.includes(nodeId)) {
+    if (current && current.neighbors.includes(nodeId) && canTravelToNode(nodeId)) {
       nodeEl.addEventListener("click", () => travelToNode(nodeId));
     }
   });
@@ -3083,20 +4669,43 @@ function travelToNode(targetNodeId) {
   if (!currentNode) return;
 
   if (!currentNode.neighbors.includes(targetNodeId)) return;
+  if (!canTravelToNode(targetNodeId)) return;
 
-  if (state.player.fuel < 1) {
-    log("Out of fuel. Drift Mode will be implemented later.", "enemy");
-    return;
+  const fromNode = state.currentNodeId;
+  const fuelCost = getTravelFuelCost(fromNode, targetNodeId);
+  console.log("[fuel cost]", fuelCost);
+
+  if (fromNode && !state.lockedNodeIds.includes(fromNode)) {
+    state.lockedNodeIds.push(fromNode);
   }
 
-  state.player.fuel -= 1;
+  if (state.run.fuel >= fuelCost) {
+    state.run.fuel -= fuelCost;
+  } else {
+    if (state.run.fuel > 0) {
+      state.run.fuel = 0;
+    }
+    applyOutOfFuelMovePenalty();
+  }
+  syncPlayerFuelFromRun();
+  console.log("[fuel remaining]", state.run.fuel);
+
   state.currentNodeId = targetNodeId;
+
+  console.log("[movement allowed]", fromNode, "->", targetNodeId);
+
+  if (state.player.hull <= 0) {
+    return;
+  }
 
   if (!state.visitedNodeIds.includes(targetNodeId)) {
     state.visitedNodeIds.push(targetNodeId);
   }
 
-  log(`Traveled to node ${targetNodeId}. Fuel: ${state.player.fuel}.`, "system");
+  log(
+    `Traveled to node ${targetNodeId} (${fuelCost} fuel). Fuel: ${state.run.fuel}.`,
+    "system"
+  );
   resolveCurrentNode();
 }
 
@@ -3188,6 +4797,7 @@ function resolveCurrentNode() {
 }
 
 function returnToMap() {
+  closeMiningMinigameIfOpen();
   state.currentScreen = "map";
   state.pendingReward = false;
   state.pendingExtraction = false;
@@ -3200,6 +4810,8 @@ function advanceAfterCombatRewards() {
   state.pendingReward = false;
   state.pendingExtraction = false;
   state.rewardChoices = [];
+  state.rewardChoiceBonus = 0;
+  state.encounterCreditRewardModifier = 1;
   returnToMap();
 }
 
@@ -3207,6 +4819,119 @@ function finishNodeAfterNonCombat() {
   state.pendingReward = false;
   markCurrentNodeCleared();
   returnToMap();
+}
+
+const MINING_MARKER_SPEED = 0.78;
+
+function closeMiningMinigameIfOpen() {
+  if (state.miningRafId != null) {
+    cancelAnimationFrame(state.miningRafId);
+    state.miningRafId = null;
+  }
+  state.miningMinigameActive = false;
+  state.miningMinigamePhase = "idle";
+  if (els.miningMinigameOverlay) els.miningMinigameOverlay.classList.add("hidden");
+  if (els.miningResultText) {
+    els.miningResultText.textContent = "";
+    els.miningResultText.classList.add("hidden");
+  }
+  if (els.miningExtractBtn) els.miningExtractBtn.classList.remove("hidden");
+  if (els.miningContinueBtn) els.miningContinueBtn.classList.add("hidden");
+}
+
+function updateMiningMarkerVisual() {
+  if (!els.miningMarker) return;
+  els.miningMarker.style.left = `${state.miningMarkerPos * 100}%`;
+}
+
+function startMiningPlanetMinigame() {
+  clearNonCombatPresentation();
+  state.pendingReward = true;
+  state.miningMinigameActive = true;
+  state.miningMinigamePhase = "playing";
+  state.miningMarkerPos = 0;
+  state.miningMarkerDir = 1;
+  if (els.miningResultText) {
+    els.miningResultText.textContent = "";
+    els.miningResultText.classList.add("hidden");
+  }
+  if (els.miningExtractBtn) els.miningExtractBtn.classList.remove("hidden");
+  if (els.miningContinueBtn) els.miningContinueBtn.classList.add("hidden");
+  if (els.miningMinigameOverlay) els.miningMinigameOverlay.classList.remove("hidden");
+  updateMiningMarkerVisual();
+
+  let last = performance.now();
+  function tick(now) {
+    if (!state.miningMinigameActive || state.miningMinigamePhase !== "playing") {
+      state.miningRafId = null;
+      return;
+    }
+    const dt = Math.min(0.048, (now - last) / 1000);
+    last = now;
+    state.miningMarkerPos += state.miningMarkerDir * MINING_MARKER_SPEED * dt;
+    if (state.miningMarkerPos >= 1) {
+      state.miningMarkerPos = 1;
+      state.miningMarkerDir = -1;
+    } else if (state.miningMarkerPos <= 0) {
+      state.miningMarkerPos = 0;
+      state.miningMarkerDir = 1;
+    }
+    updateMiningMarkerVisual();
+    state.miningRafId = requestAnimationFrame(tick);
+  }
+  state.miningRafId = requestAnimationFrame(tick);
+  render();
+}
+
+function onMiningExtract() {
+  if (!state.miningMinigameActive || state.miningMinigamePhase !== "playing") return;
+  if (state.miningRafId != null) {
+    cancelAnimationFrame(state.miningRafId);
+    state.miningRafId = null;
+  }
+  const pos = state.miningMarkerPos;
+  let tier = "miss";
+  if (pos >= 0.44 && pos <= 0.56) tier = "perfect";
+  else if (pos >= 0.28 && pos <= 0.72) tier = "good";
+
+  let msg = "";
+  if (tier === "perfect") {
+    gainCredits(50, "rich mining vein");
+    repairPlayerHull(3, "Rich vein secured");
+    msg = "Rich Vein Secured — +50 credits and a small hull patch.";
+  } else if (tier === "good") {
+    gainCredits(25, "mining operation");
+    msg = "Solid yield — +25 credits.";
+  } else {
+    gainCredits(10, "mining scrape");
+    msg = "Marginal ore — +10 credits.";
+  }
+
+  state.miningMinigamePhase = "result";
+  if (els.miningResultText) {
+    els.miningResultText.textContent = msg;
+    els.miningResultText.classList.remove("hidden");
+  }
+  if (els.miningExtractBtn) els.miningExtractBtn.classList.add("hidden");
+  if (els.miningContinueBtn) els.miningContinueBtn.classList.remove("hidden");
+  log(msg, "system");
+}
+
+function onMiningContinue() {
+  closeMiningMinigameIfOpen();
+  finishNodeAfterNonCombat();
+}
+
+function initMiningMinigame() {
+  if (els.miningExtractBtn) els.miningExtractBtn.addEventListener("click", onMiningExtract);
+  if (els.miningContinueBtn) els.miningContinueBtn.addEventListener("click", onMiningContinue);
+  document.addEventListener("keydown", e => {
+    if (!state.miningMinigameActive || state.miningMinigamePhase !== "playing") return;
+    if (e.code === "Space" || e.key === " ") {
+      e.preventDefault();
+      onMiningExtract();
+    }
+  });
 }
 
 function showDockOverlay() {
@@ -3228,9 +4953,11 @@ function showDockOverlay() {
     <div class="reward-meta">Restore fuel to full (free)</div>
   `;
   refuelBtn.addEventListener("click", () => {
-    const restored = state.player.maxFuel - state.player.fuel;
-    state.player.fuel = state.player.maxFuel;
-    log(`Dock: refueled ${restored} fuel. Total fuel: ${state.player.fuel}.`, "system");
+    const restored = state.player.maxFuel - state.run.fuel;
+    state.run.fuel = state.player.maxFuel;
+    syncPlayerFuelFromRun();
+    console.log("[fuel remaining]", state.run.fuel);
+    log(`Dock: refueled ${restored} fuel. Total fuel: ${state.run.fuel}.`, "system");
     returnToMap();
   });
 
@@ -3268,8 +4995,7 @@ function showShopOverlay() {
   state.pendingReward = true;
 
   els.overlayTitle.textContent = "Babu's Emporium";
-  els.overlayText.textContent =
-    "A strange alien merchant offers questionable tech, polished salvage, and suspiciously fair prices.";
+  els.overlayText.textContent = `Credits: ${state.runCredits}. A strange alien merchant offers questionable tech, polished salvage, and suspiciously fair prices.`;
 
   els.overlayBtn.classList.add("hidden");
   els.rewardOptions.innerHTML = "";
@@ -3293,6 +5019,7 @@ function showShopOverlay() {
       <div class="reward-name">${card.name}</div>
       <div class="reward-meta">Buy for 25 credits • ${card.description}</div>
     `;
+    btn.disabled = state.runCredits < 25;
 
     btn.addEventListener("click", () => {
       if (state.runCredits < 25) {
@@ -3302,9 +5029,10 @@ function showShopOverlay() {
 
       state.runCredits -= 25;
       state.runDeck.push(cardId);
+      state.shopInventory = state.shopInventory.filter(id => id !== cardId);
 
       log(`Bought ${card.name}.`, "system");
-      returnToMap();
+      showShopOverlay();
     });
 
     els.rewardOptions.appendChild(btn);
@@ -3318,6 +5046,7 @@ function showShopOverlay() {
   <div class="reward-meta">Cost: 15 credits</div>
 `;
 
+  rerollBtn.disabled = state.runCredits < 15;
   rerollBtn.addEventListener("click", () => {
     if (state.runCredits < 15) {
       log("Not enough credits.", "enemy");
@@ -3340,6 +5069,7 @@ function showShopOverlay() {
     <div class="reward-name">Remove a Card</div>
     <div class="reward-meta">Cost: 40 credits</div>
   `;
+  removeBtn.disabled = state.runCredits < 40;
   removeBtn.addEventListener("click", () => {
     if (state.runCredits < 40) {
       log("Not enough credits.", "enemy");
@@ -3353,8 +5083,8 @@ function showShopOverlay() {
   const leaveBtn = document.createElement("button");
   leaveBtn.className = "reward-option";
   leaveBtn.innerHTML = `
-    <div class="reward-name">Leave</div>
-    <div class="reward-meta">Return to map</div>
+    <div class="reward-name">Leave Shop</div>
+    <div class="reward-meta">Return to the map</div>
   `;
   leaveBtn.addEventListener("click", () => returnToMap());
   els.rewardOptions.appendChild(leaveBtn);
@@ -3385,6 +5115,7 @@ function showRemoveCardOverlay() {
       <div class="reward-meta">Remove for 40 credits</div>
     `;
 
+    btn.disabled = state.runCredits < 40;
     btn.addEventListener("click", () => {
       if (state.runCredits < 40) {
         log("Not enough credits.", "enemy");
@@ -3395,7 +5126,7 @@ function showRemoveCardOverlay() {
       state.runDeck.splice(index, 1);
 
       log(`Removed ${card.name} from deck.`, "system");
-      returnToMap();
+      showShopOverlay();
     });
 
     els.rewardOptions.appendChild(btn);
@@ -3434,15 +5165,26 @@ function showDistressOverlay() {
   investigateBtn.addEventListener("click", () => {
     const roll = Math.random();
 
-    if (roll < 0.45) {
+    if (roll < 0.38) {
       gainCredits(20, "Distress signal salvage");
       finishNodeAfterNonCombat();
       return;
     }
 
-    if (roll < 0.75) {
-      state.player.fuel = Math.min(state.player.maxFuel, state.player.fuel + 1);
-      log(`Distress signal yields emergency fuel. Fuel: ${state.player.fuel}.`, "system");
+    if (roll < 0.58) {
+      state.run.fuel = Math.min(state.player.maxFuel, state.run.fuel + 1);
+      syncPlayerFuelFromRun();
+      console.log("[fuel remaining]", state.run.fuel);
+      log(`Distress signal yields emergency fuel. Fuel: ${state.run.fuel}.`, "system");
+      finishNodeAfterNonCombat();
+      return;
+    }
+
+    if (roll < 0.73) {
+      state.run.fuel = Math.max(0, state.run.fuel - 1);
+      syncPlayerFuelFromRun();
+      console.log("[fuel remaining]", state.run.fuel);
+      log(`Distress signal drained auxiliary reserves. Fuel: ${state.run.fuel}.`, "enemy");
       finishNodeAfterNonCombat();
       return;
     }
@@ -3588,11 +5330,20 @@ function startNextSector() {
   state.sectorNumber += 1;
   state.gateUnlocked = false;
   state.mapNodes = createSectorByNumber(state.sectorNumber);
+  if (state.sectorNumber <= 3) {
+    console.log("[campaign route map]", state.sectorNumber, state.mapNodes);
+  }
   state.currentNodeId = "S";
   state.visitedNodeIds = ["S"];
+  state.lockedNodeIds = [];
   state.clearedNodeIds = [];
-  state.player.fuel = state.player.maxFuel;
-  state.encounterIndex = 0;
+  applyFuelCapForRunState();
+  state.run.fuel = state.player.maxFuel;
+  syncPlayerFuelFromRun();
+  console.log("[fuel tuning]", "sector", state.sectorNumber, "fuel", state.run.fuel, "max", state.player.maxFuel);
+  state.player.hull = state.player.maxHull;
+  log("Hull restored to full for new sector");
+  console.log("[sector reset]", "hull", state.player.hull, "/", state.player.maxHull);
   state.encounterTier = "easy";
   state.pendingPlanetAlienAmbush = false;
   state.planetAlienAmbushCombat = false;
@@ -3606,7 +5357,9 @@ function startNextSector() {
   state.victoryFuelGranted = false;
   state.inBossCombat = false;
   state.pendingBoss = false;
-  log(`Jumped to Sector ${state.sectorNumber}. Fuel restored to ${state.player.fuel}.`, "system");
+  state.bossEncounterId = pickRandomBossEncounterId();
+  if (state.run) state.run.encounterTagCounts = {};
+  log(`Jumped to Sector ${state.sectorNumber}. Fuel restored to ${state.run.fuel}.`, "system");
   hideComboBanner();
   returnToMap();
 }
@@ -3630,11 +5383,11 @@ function showPlanetOverlay() {
   exploreBtn.className = "reward-option";
   exploreBtn.innerHTML = `
     <div class="reward-name">Explore Planet</div>
-    <div class="reward-meta">Resolve the planet event and consume this node.</div>
+    <div class="reward-meta">Surface mining drill — quick timing game. Consumes this node.</div>
   `;
   exploreBtn.addEventListener("click", () => {
     hideOverlay();
-    resolvePlanetEvent();
+    startMiningPlanetMinigame();
   });
 
   const leaveBtn = document.createElement("button");
@@ -3654,15 +5407,19 @@ function showPlanetOverlay() {
 }
 
 function getSectorBossName(sectorNumber) {
-  if (sectorNumber === 1) return "Sentinel Frigate";
-  if (sectorNumber === 2) return "Contract Warden";
-  return "Blacksite Hunter";
+  const id = state.bossEncounterId || "bastion";
+  if (id === "bastion") return "Bastion";
+  if (id === "overloader") return "Overloader";
+  if (id === "hive-mind") return "Hive Mind";
+  return "Bastion";
 }
 
 function getSectorBossDescription(sectorNumber) {
-  if (sectorNumber === 1) return "Patterned warship with adaptive system disruption.";
-  if (sectorNumber === 2) return "Aggressive dual-ship assault.";
-  return "Fortified flagship with support cover.";
+  const id = state.bossEncounterId || "bastion";
+  if (id === "bastion") return "Defense boss—layers of block and fortification.";
+  if (id === "overloader") return "Burst boss—charges, then unloads massive damage.";
+  if (id === "hive-mind") return "Summoner boss—drones empower it until cleared.";
+  return "High-value contract target.";
 }
 
 function getSectorUpgradeFlavor(sectorNumber) {
@@ -3695,30 +5452,14 @@ function getNotorietyLabel(notoriety) {
 }
 
 function buildSectorBossEncounter(sectorNumber) {
-  let bossType = "blacksite-hunter";
-  if (sectorNumber === 1) bossType = "sentinel-frigate";
-  else if (sectorNumber === 2) bossType = "contract-warden";
-
-  if (sectorNumber === 1) {
-    const lead = getEnemyTypeById("sentinel-frigate") || ENEMY_TYPES[Math.min(3, ENEMY_TYPES.length - 1)];
-    const bossEnemy = buildEnemyFromTemplate(lead, "bounty", "elite");
-    bossEnemy.bossType = bossType;
-    return [bossEnemy];
-  }
-
-  if (sectorNumber === 2) {
-    const lead = ENEMY_TYPES[Math.min(4, ENEMY_TYPES.length - 1)];
-    const wing = getEnemyTypeById("burst-bounty") || lead;
-    const bossEnemy = buildEnemyFromTemplate(lead, "bounty", "hard");
-    bossEnemy.bossType = bossType;
-    return [bossEnemy, buildEnemyFromTemplate(wing, "bounty", "hard")];
-  }
-
-  const tank = getEnemyTypeById("bulwark") || ENEMY_TYPES[Math.min(3, ENEMY_TYPES.length - 1)];
-  const escort = getEnemyTypeById("support-escort") || ENEMY_TYPES[0];
-  const bossEnemy = buildEnemyFromTemplate(tank, "bounty", "elite");
-  bossEnemy.bossType = bossType;
-  return [bossEnemy, buildEnemyFromTemplate(escort, "escort", "hard")];
+  const id = state.bossEncounterId || pickRandomBossEncounterId();
+  state.bossEncounterId = id;
+  const templateId =
+    id === "bastion" ? "boss-bastion" : id === "overloader" ? "boss-overloader" : "boss-hive-mind";
+  const lead = getEnemyTypeById(templateId) || getEnemyTypeById("boss-bastion");
+  const bossEnemy = buildEnemyFromTemplate(lead, "bounty", "elite");
+  bossEnemy.bossType = id;
+  return [bossEnemy];
 }
 
 function showBossIntroOverlay() {
@@ -3775,26 +5516,22 @@ function showGateOverlay() {
   state.pendingReward = true;
 
   els.overlayTitle.textContent = "Boss Contract";
-  els.overlayText.textContent = state.gateUnlocked
-    ? "High-value target located. Engage to complete the sector contract."
-    : "Contract locked. Eliminate the elite target to reveal the boss.";
+  els.overlayText.textContent = "High-value target located. Engage to complete the sector contract.";
   els.overlayBtn.classList.add("hidden");
   els.rewardOptions.innerHTML = "";
   els.rewardOptions.classList.remove("hidden");
   els.overlay.classList.remove("hidden");
 
-  if (state.gateUnlocked) {
-    const jumpBtn = document.createElement("button");
-    jumpBtn.className = "reward-option";
-    jumpBtn.innerHTML = `
-      <div class="reward-name">Engage Boss Contract</div>
-      <div class="reward-meta">Confront ${getSectorBossName(state.sectorNumber)} to unlock the next sector upgrade.</div>
-    `;
-    jumpBtn.addEventListener("click", () => {
-      showBossIntroOverlay();
-    });
-    els.rewardOptions.appendChild(jumpBtn);
-  }
+  const jumpBtn = document.createElement("button");
+  jumpBtn.className = "reward-option";
+  jumpBtn.innerHTML = `
+    <div class="reward-name">Engage Boss Contract</div>
+    <div class="reward-meta">Confront ${getSectorBossName(state.sectorNumber)} to unlock the next sector upgrade.</div>
+  `;
+  jumpBtn.addEventListener("click", () => {
+    showBossIntroOverlay();
+  });
+  els.rewardOptions.appendChild(jumpBtn);
 
   const leaveBtn = document.createElement("button");
   leaveBtn.className = "reward-option";
@@ -3810,137 +5547,131 @@ function showGateOverlay() {
   render();
 }
 
+function resolveBossArchetypeKey() {
+  if (state.run?.committedArchetype) return state.run.committedArchetype;
+  const s = getShipArchetype(state.selectedShipId);
+  if (s === "snub") return "block";
+  if (s === "neutral") return "beam";
+  return s;
+}
+
+function getBossArchetypeAmplifierOption() {
+  const key = resolveBossArchetypeKey();
+  if (key === "block") {
+    return {
+      name: "Bulwark Coupling",
+      meta: "Archetype — +2 shield effectiveness on block cards.",
+      apply: () => {
+        state.player.shieldBonus = (state.player.shieldBonus || 0) + 2;
+      }
+    };
+  }
+  if (key === "burn") {
+    return {
+      name: "Thermal Amplifier",
+      meta: "Archetype — +1 burn damage each tick.",
+      apply: () => {
+        state.player.runBurnBonus = (state.player.runBurnBonus || 0) + 1;
+      }
+    };
+  }
+  if (key === "mark") {
+    return {
+      name: "Hunter's Lens",
+      meta: "Archetype — +2 damage when you apply Mark.",
+      apply: () => {
+        state.player.markOnApplyDamage = (state.player.markOnApplyDamage || 0) + 2;
+      }
+    };
+  }
+  if (key === "beam") {
+    return {
+      name: "Beam Capacitors",
+      meta: "Archetype — +1 Beam whenever you gain Beam.",
+      apply: () => {
+        state.player.runBeamGenerationBonus = (state.player.runBeamGenerationBonus || 0) + 1;
+      }
+    };
+  }
+  if (key === "drone") {
+    return {
+      name: "Swarm Matrix",
+      meta: "Archetype — +1 drone strike damage.",
+      apply: () => {
+        state.player.droneDamageBonus = (state.player.droneDamageBonus || 0) + 1;
+      }
+    };
+  }
+  return {
+    name: "Bulwark Coupling",
+    meta: "Archetype — +2 shield effectiveness on block cards.",
+    apply: () => {
+      state.player.shieldBonus = (state.player.shieldBonus || 0) + 2;
+    }
+  };
+}
+
 function showShipUpgradeOverlay() {
   hideComboBanner();
   state.pendingReward = true;
   const flavor = getSectorUpgradeFlavor(state.sectorNumber);
+  const arch = getBossArchetypeAmplifierOption();
 
   els.overlayTitle.textContent = flavor.title;
-  els.overlayText.textContent = `${flavor.text} Current notoriety: ${getNotorietyLabel(state.notoriety)}.`;
+  els.overlayText.textContent = `${flavor.text} Current notoriety: ${getNotorietyLabel(state.notoriety)}. Choose one boss reward.`;
   els.overlayBtn.classList.add("hidden");
   els.rewardOptions.innerHTML = "";
   els.rewardOptions.classList.remove("hidden");
   els.overlay.classList.remove("hidden");
 
-  const energyBtn = document.createElement("button");
-  energyBtn.className = "reward-option";
-  energyBtn.innerHTML = `
-    <div class="reward-name">+1 Max Energy</div>
-    <div class="reward-meta">Increase your base reactor output by 1.</div>
+  function finishBossReward() {
+    hideOverlay();
+    state.notoriety += 1;
+    startNextSector();
+  }
+
+  const powerBtn = document.createElement("button");
+  powerBtn.className = "reward-option";
+  powerBtn.innerHTML = `
+    <div class="reward-name">Reactor Surge (Power)</div>
+    <div class="reward-meta">+1 max energy per turn.</div>
   `;
-  energyBtn.addEventListener("click", () => {
+  powerBtn.addEventListener("click", () => {
     state.player.baseEnergy += 1;
     state.player.energy = state.player.baseEnergy + state.player.reactorBonus;
-    hideOverlay();
-    state.notoriety += 1;
-    startNextSector();
+    log("Boss reward acquired: Reactor Surge", "system");
+    finishBossReward();
   });
 
-  const hullBtn = document.createElement("button");
-  hullBtn.className = "reward-option";
-  hullBtn.innerHTML = `
-    <div class="reward-name">+10 Max Hull</div>
-    <div class="reward-meta">Increase hull capacity and current hull by 10.</div>
+  const archBtn = document.createElement("button");
+  archBtn.className = "reward-option";
+  archBtn.innerHTML = `
+    <div class="reward-name">${arch.name} (Archetype)</div>
+    <div class="reward-meta">${arch.meta}</div>
   `;
-  hullBtn.addEventListener("click", () => {
-    state.player.maxHull += 10;
-    state.player.hull += 10;
-    hideOverlay();
-    state.notoriety += 1;
-    startNextSector();
+  archBtn.addEventListener("click", () => {
+    arch.apply();
+    log(`Boss reward acquired: ${arch.name}`, "system");
+    finishBossReward();
   });
 
-  const fuelBtn = document.createElement("button");
-  fuelBtn.className = "reward-option";
-  fuelBtn.innerHTML = `
-    <div class="reward-name">+1 Max Fuel</div>
-    <div class="reward-meta">Increase fuel tank capacity by 1.</div>
+  const wildBtn = document.createElement("button");
+  wildBtn.className = "reward-option";
+  wildBtn.innerHTML = `
+    <div class="reward-name">Neural Shunt (Wildcard)</div>
+    <div class="reward-meta">+1 card drawn at the start of each turn.</div>
   `;
-  fuelBtn.addEventListener("click", () => {
-    state.player.maxFuel += 1;
-    state.player.fuel = Math.min(state.player.fuel + 1, state.player.maxFuel);
-    hideOverlay();
-    state.notoriety += 1;
-    startNextSector();
+  wildBtn.addEventListener("click", () => {
+    state.player.handDrawBonus = (state.player.handDrawBonus || 0) + 1;
+    log("Boss reward acquired: Neural Shunt", "system");
+    finishBossReward();
   });
 
-  els.rewardOptions.appendChild(energyBtn);
-  els.rewardOptions.appendChild(hullBtn);
-  els.rewardOptions.appendChild(fuelBtn);
+  els.rewardOptions.appendChild(powerBtn);
+  els.rewardOptions.appendChild(archBtn);
+  els.rewardOptions.appendChild(wildBtn);
 
   render();
-}
-
-function showPlanetResolvedOverlay(title, text) {
-  state.pendingReward = true;
-  els.overlayTitle.textContent = title;
-  els.overlayText.textContent = text;
-  els.overlayBtn.classList.add("hidden");
-  els.rewardOptions.innerHTML = "";
-  els.rewardOptions.classList.remove("hidden");
-  els.overlay.classList.remove("hidden");
-
-  const btn = document.createElement("button");
-  btn.className = "reward-option";
-  btn.innerHTML = `
-    <div class="reward-name">Continue</div>
-    <div class="reward-meta">Return to the map.</div>
-  `;
-  btn.addEventListener("click", () => finishNodeAfterNonCombat());
-  els.rewardOptions.appendChild(btn);
-  render();
-}
-
-function resolvePlanetEvent() {
-  const kinds = ["alien", "cache", "fuel", "tech", "radiation"];
-  const kind = pickRandom(kinds);
-
-  if (kind === "alien") {
-    state.encounterIndex += 1;
-    state.pendingPlanetAlienAmbush = true;
-    beginEncounter();
-    return;
-  }
-
-  clearNonCombatPresentation();
-  state.pendingReward = true;
-
-  if (kind === "cache") {
-    gainCredits(30, "planet derelict cache");
-    showPlanetResolvedOverlay("Planet", "Derelict cache: +30 credits.");
-    return;
-  }
-
-  if (kind === "fuel") {
-    state.player.fuel = Math.max(0, state.player.fuel - 1);
-    log(`Planet: fuel leak — lost 1 fuel. Fuel: ${state.player.fuel}.`, "system");
-    showPlanetResolvedOverlay("Planet", "Fuel leak: −1 fuel.");
-    return;
-  }
-
-  if (kind === "tech") {
-    const pool = shuffle(REWARD_POOL_IDS.slice());
-    const cardId = pool[0];
-    state.runDeck.push(cardId);
-    const card = ALL_CARDS.find(c => c.id === cardId);
-    const name = card ? card.name : cardId;
-    log(`Planet: tech find — ${name} added to your deck.`, "system");
-    showPlanetResolvedOverlay("Planet", `Tech find: ${name} added to your deck.`);
-    return;
-  }
-
-  state.player.hull = Math.max(0, state.player.hull - 4);
-  log(`Planet: radiation storm — took 4 hull damage. Hull: ${state.player.hull}.`, "enemy");
-  if (state.player.hull <= 0) {
-    showOverlay(
-      "Run Failed",
-      "Radiation exposure destroyed your ship.",
-      "Restart Run",
-      () => startRun()
-    );
-    return;
-  }
-  showPlanetResolvedOverlay("Planet", `Radiation storm: −4 hull (${state.player.hull} / ${state.player.maxHull}).`);
 }
 
 function chooseCreditsReward() {
@@ -3996,11 +5727,13 @@ function skipReward() {
 function showRewardOverlay() {
   state.pendingReward = true;
   state.rewardChoices = buildRewardChoices();
+  const cardOptions = state.rewardChoices.length;
 
   els.overlayTitle.textContent = "Encounter Won";
-  els.overlayText.textContent = `Choose 1 card reward before encounter ${state.encounterIndex + 2}.`;
+  els.overlayText.textContent = `Choose 1 card reward (${cardOptions} options) before encounter ${state.encounterIndex + 2}.`;
   els.overlayBtn.classList.add("hidden");
   els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.add("reward-card-grid");
   els.rewardOptions.classList.remove("hidden");
   els.overlay.classList.remove("hidden");
 
@@ -4009,23 +5742,97 @@ function showRewardOverlay() {
     if (!card) return;
 
     const button = document.createElement("button");
-    button.className = "reward-option";
+    const role = card.cardRole || "system";
+    button.type = "button";
+    button.className = `reward-card-button card ${card.type} role-${role}`.trim();
     button.innerHTML = `
-      <div class="reward-name">${card.name}</div>
-      <div class="reward-meta">${getCardCategoryLabel(card)} • Cost ${card.cost} • ${card.description}</div>
+      <div class="card-top">
+        <div class="card-title">${card.name}</div>
+        <div class="cost">${card.cost}</div>
+      </div>
+      <div class="card-type">${getCardCategoryLabel(card)}</div>
+      <div class="card-text">${enhanceCardDescriptionWithTooltips(card.description)}</div>
     `;
     button.addEventListener("click", () => chooseReward(cardId));
     els.rewardOptions.appendChild(button);
   });
 
+  const skipWrap = document.createElement("div");
+  skipWrap.className = "reward-skip-wrap";
   const skipBtn = document.createElement("button");
+  skipBtn.type = "button";
   skipBtn.className = "reward-option reward-option-secondary";
   skipBtn.innerHTML = `
     <div class="reward-name">Skip</div>
     <div class="reward-meta">Decline all card rewards and continue.</div>
   `;
   skipBtn.addEventListener("click", skipReward);
-  els.rewardOptions.appendChild(skipBtn);
+  skipWrap.appendChild(skipBtn);
+  els.rewardOptions.appendChild(skipWrap);
+}
+
+function showCommitMomentOverlay() {
+  state.pendingReward = true;
+
+  const earnedNow = state.lastCombatCreditsEarned || 0;
+  els.overlayTitle.textContent = "Elite commitment";
+  els.overlayText.textContent = `Choose one run-long focus. This only appears once per run.\nCredits this fight: +${earnedNow}`;
+  els.overlayBtn.classList.add("hidden");
+  els.rewardOptions.innerHTML = "";
+  els.rewardOptions.classList.remove("hidden");
+  els.overlay.classList.remove("hidden");
+
+  const options = shuffle(["block", "burn", "mark", "beam", "drone"]).slice(0, 3);
+  const meta = {
+    block: "Bulwark — +2 to block from block cards (run)",
+    burn: "Ember — +1 burn damage each tick (run)",
+    mark: "Hunter — +2 damage when you apply Mark (run)",
+    beam: "Lancer — +1 Beam whenever you gain Beam (run)",
+    drone: "Swarm — +1 drone strike damage (run)"
+  };
+  const names = {
+    block: "Commit: Bulwark",
+    burn: "Commit: Ember",
+    mark: "Commit: Hunter",
+    beam: "Commit: Lancer",
+    drone: "Commit: Swarm"
+  };
+
+  options.forEach(archetype => {
+    const btn = document.createElement("button");
+    btn.className = "reward-option";
+    btn.innerHTML = `
+      <div class="reward-name">${names[archetype]}</div>
+      <div class="reward-meta">${meta[archetype]}</div>
+    `;
+    btn.addEventListener("click", () => applyCommitChoice(archetype));
+    els.rewardOptions.appendChild(btn);
+  });
+
+  render();
+}
+
+function applyCommitChoice(archetype) {
+  if (!state.run) return;
+  state.run.commitMomentUsed = true;
+  state.run.committedArchetype = archetype;
+
+  if (archetype === "block") {
+    state.player.shieldBonus = (state.player.shieldBonus || 0) + 2;
+  } else if (archetype === "burn") {
+    state.player.runBurnBonus = (state.player.runBurnBonus || 0) + 1;
+  } else if (archetype === "mark") {
+    state.player.markOnApplyDamage = (state.player.markOnApplyDamage || 0) + 2;
+  } else if (archetype === "beam") {
+    state.player.runBeamGenerationBonus = (state.player.runBeamGenerationBonus || 0) + 1;
+  } else if (archetype === "drone") {
+    state.player.droneDamageBonus = (state.player.droneDamageBonus || 0) + 1;
+  }
+
+  log(`Committed to ${archetype}`, "system");
+  state.pendingReward = false;
+  hideOverlay();
+  returnToMap();
 }
 
 function showPostVictoryChoiceOverlay() {
@@ -4033,6 +5840,7 @@ function showPostVictoryChoiceOverlay() {
 
   const creditReward = getCreditRewardForEncounter(state.encounterIndex);
   const earnedNow = state.lastCombatCreditsEarned || 0;
+  const cardOptions = 3 + (state.rewardChoiceBonus || 0);
 
   els.overlayTitle.textContent = "Encounter Won";
   els.overlayText.textContent = `Credits earned: +${earnedNow}\nCurrent credits: ${state.runCredits}\nChoose your reward.`;
@@ -4045,7 +5853,7 @@ function showPostVictoryChoiceOverlay() {
   cardBtn.className = "reward-option";
   cardBtn.innerHTML = `
     <div class="reward-name">Take Card Reward</div>
-    <div class="reward-meta">Pick 1 of 3 cards to add to your deck.</div>
+    <div class="reward-meta">Pick 1 of ${cardOptions} cards to add to your deck.</div>
   `;
   cardBtn.addEventListener("click", chooseCardReward);
 
@@ -4062,22 +5870,50 @@ function showPostVictoryChoiceOverlay() {
 }
 
 function buildEnemyFromTemplate(template, role, tier) {
+  const sectorScale = 1 + (state.sectorNumber - 1) * 0.25;
+  const encounterScale = 1 + state.encounterIndex * 0.15;
+  const finalScale = sectorScale * encounterScale;
+
   const endlessScale =
     state.endlessMode && state.sectorNumber > 3 ? 1 + (state.sectorNumber - 3) * 0.08 : 1;
   const mult = (TIER_MULTIPLIER[tier] ?? 1) * endlessScale;
-  const scaledMaxHull = Math.round(template.maxHull * mult);
+  const earlyHpFactor = tier === "easy" ? 1.12 : 1;
+  const scaledMaxHull = Math.floor(Math.round(template.maxHull * earlyHpFactor * mult) * finalScale);
   const baseGetIntent = template.getIntent;
 
   function scaledGetIntent(turn) {
     const base = baseGetIntent(turn);
-    const pressureBonus = base.type === "attack" ? Math.floor(Math.max(0, turn - 1) / 2) : 0;
-    const scaledAmount = Math.max(0, Math.round(base.amount * mult) + pressureBonus);
+    let pressureBonus = 0;
+    if (base.type === "attack") {
+      pressureBonus =
+        state.sectorNumber === 1
+          ? Math.floor(Math.max(0, turn - 3) / 3)
+          : Math.floor(Math.max(0, turn - 1) / 2);
+    }
+    let scaledAmount;
+    if (base.type === "attack") {
+      scaledAmount = Math.max(0, Math.round(base.amount * mult * finalScale) + pressureBonus);
+    } else {
+      scaledAmount = Math.max(0, Math.round((base.amount || 0) * mult));
+    }
+    const intentType = base.intentType || base.type;
+    let text;
+    if (base.textTemplate) {
+      text = base.textTemplate.replace(/BLOCK/g, String(scaledAmount));
+    } else if (base.intentType && base.text) {
+      text = base.text;
+    } else {
+      text = formatIntentText(base.type, scaledAmount);
+    }
     return {
       ...base,
       amount: scaledAmount,
-      text: formatIntentText(base.type, scaledAmount)
+      text,
+      intentType
     };
   }
+
+  console.log(template.name, finalScale);
 
   return {
     uid: `${template.id}-${Math.random().toString(36).slice(2, 10)}`,
@@ -4094,11 +5930,14 @@ function buildEnemyFromTemplate(template, role, tier) {
     burnStacks: 0,
     laserStacks: 0,
     role,
+    combatRole: template.combatRole || null,
+    priority: template.priority || "medium",
     turnCounter: 0,
     bossType: null,
     spawnedEscort: false,
     damageReduction: 0,
     attackReduction: 0,
+    extraDamageFromLockThisTurn: 0,
     getIntent: scaledGetIntent,
     intent: scaledGetIntent(1)
   };
@@ -4108,12 +5947,572 @@ function getEnemyTypeById(id) {
   return ENEMY_TYPES.find(e => e.id === id) || null;
 }
 
+const ENCOUNTER_BUCKETS = [
+  {
+    id: "s1-solo-scout",
+    name: "Forward Scout",
+    enemyIds: ["scout"],
+    danger: 1,
+    tags: ["balanced", "sustain"],
+    flavorText: "A lone picket—good for learning tempo and target priority.",
+    minSector: 1,
+    maxSector: 1,
+    tiers: ["easy", "medium"]
+  },
+  {
+    id: "s1-solo-burner",
+    name: "Thermal Pickett",
+    enemyIds: ["burner-drone"],
+    danger: 1,
+    tags: ["burn-pressure", "sustain"],
+    flavorText: "Heat stacks if you ignore it—plan mitigation early.",
+    postCombatEffect: "burn-pressure",
+    minSector: 1,
+    maxSector: 1,
+    tiers: ["easy", "medium"]
+  },
+  {
+    id: "s1-shield-line",
+    name: "Shield Line",
+    enemyIds: ["defender-drone", "charger-drone"],
+    roles: ["bounty", "bounty"],
+    danger: 2,
+    tags: ["defense", "burst"],
+    flavorText: "Shields feed a heavy discharge—burst windows matter.",
+    minSector: 1,
+    maxSector: 1,
+    tiers: ["hard"]
+  },
+  {
+    id: "s1-mixed-patrol",
+    name: "Mixed Patrol",
+    enemyIds: ["raider", "scout"],
+    roles: ["bounty", "escort"],
+    danger: 2,
+    tags: ["balanced", "swarm"],
+    flavorText: "Two hulls with different rhythms—don’t split focus forever.",
+    minSector: 1,
+    maxSector: 1,
+    tiers: ["medium", "hard"]
+  },
+  {
+    id: "s1-stall-pair",
+    name: "Bulwark Screen",
+    enemyIds: ["bulwark", "support-escort"],
+    roles: ["bounty", "escort"],
+    danger: 3,
+    tags: ["defense", "siege", "elite-support"],
+    flavorText: "Thick block and escort support—break the stall or spike through it.",
+    postCombatEffect: "defense-salvage",
+    bonusCredits: 12,
+    flavorOutcomeText: "Salvaged reinforced plating",
+    minSector: 1,
+    maxSector: 1,
+    tiers: ["hard"]
+  },
+  {
+    id: "s2-solo-raider",
+    name: "Raider Contact",
+    enemyIds: ["raider"],
+    danger: 2,
+    tags: ["balanced", "sustain"],
+    flavorText: "A stubborn skiff that rewards steady pressure.",
+    rewardModifier: 1.12,
+    minSector: 2,
+    maxSector: 2,
+    tiers: ["easy", "medium"]
+  },
+  {
+    id: "s2-burner-parasite",
+    name: "Infestation Sweep",
+    enemyIds: ["burner-drone", "alien-parasite"],
+    roles: ["bounty", "bounty"],
+    danger: 3,
+    tags: ["burn-pressure", "alien", "sustain"],
+    flavorText: "Thermal damage plus parasitic sustain—clear one threat fast.",
+    minSector: 2,
+    maxSector: 2,
+    tiers: ["medium"]
+  },
+  {
+    id: "s2-hunter-defender",
+    name: "Hunter Screen",
+    enemyIds: ["hunter", "defender-drone"],
+    roles: ["bounty", "escort"],
+    danger: 3,
+    tags: ["defense", "burst"],
+    flavorText: "A hunter up front with a defender shielding the line.",
+    minSector: 2,
+    maxSector: 2,
+    tiers: ["medium", "hard"]
+  },
+  {
+    id: "s2-ace-escort",
+    name: "Ace Escort Pair",
+    enemyIds: ["interceptor", "support-escort"],
+    roles: ["bounty", "escort"],
+    danger: 4,
+    tags: ["burst", "elite-support", "defense"],
+    flavorText: "Ace damage plus escort shields—burst down or get buried.",
+    minSector: 2,
+    maxSector: 2,
+    tiers: ["hard"]
+  },
+  {
+    id: "s2-double-strike",
+    name: "Double Strike",
+    enemyIds: ["raider", "hunter"],
+    roles: ["bounty", "bounty"],
+    danger: 3,
+    tags: ["balanced", "burst", "swarm"],
+    flavorText: "Two bounty targets—double the pressure, double the payoffs.",
+    postCombatEffect: "swarm-options",
+    flavorOutcomeText: "Tight formation—extra salvage on the reward screen.",
+    minSector: 2,
+    maxSector: 2,
+    tiers: ["medium", "hard"]
+  },
+  {
+    id: "s3-solo-hunter",
+    name: "Hunter Contact",
+    enemyIds: ["hunter"],
+    danger: 3,
+    tags: ["burst", "balanced"],
+    flavorText: "A focused hunter—respect its attack cadence.",
+    minSector: 3,
+    maxSector: null,
+    tiers: ["easy", "medium"]
+  },
+  {
+    id: "s3-alien-charger",
+    name: "Alien Overcharge",
+    enemyIds: ["alien-parasite", "charger-drone"],
+    roles: ["bounty", "bounty"],
+    danger: 5,
+    tags: ["alien", "burst", "sustain"],
+    flavorText: "Xeno drain paired with a charging battery—volatile and cruel.",
+    minSector: 3,
+    maxSector: null,
+    tiers: ["medium", "hard"]
+  },
+  {
+    id: "s3-bulwark-burner",
+    name: "Bastion Furnace",
+    enemyIds: ["bulwark", "burner-drone"],
+    roles: ["bounty", "escort"],
+    danger: 5,
+    tags: ["defense", "burn-pressure", "siege"],
+    flavorText: "A wall of block with fire behind it—siege breaks or burns.",
+    minSector: 3,
+    maxSector: null,
+    tiers: ["hard"]
+  },
+  {
+    id: "s3-burst-interceptor",
+    name: "Burst Intercept",
+    enemyIds: ["burst-bounty", "interceptor"],
+    roles: ["bounty", "bounty"],
+    danger: 6,
+    tags: ["burst", "swarm"],
+    flavorText: "Pure spike damage—stabilize fast or get shredded.",
+    minSector: 3,
+    maxSector: null,
+    tiers: ["hard"]
+  },
+  {
+    id: "s3-alien-pack",
+    name: "Alien Pack",
+    enemyIds: ["alien-parasite", "hunter"],
+    roles: ["bounty", "bounty"],
+    danger: 5,
+    tags: ["alien", "balanced", "sustain"],
+    flavorText: "Alien sustain meets human aggression—don’t feed the parasite.",
+    postCombatEffect: "alien-residue",
+    bonusCredits: 6,
+    flavorOutcomeText: "Odd residue sold for scrap",
+    minSector: 3,
+    maxSector: null,
+    tiers: ["medium", "hard"]
+  },
+  {
+    id: "s3-var-wing",
+    name: "Skirmish Wing",
+    enemyIds: ["scout", "raider"],
+    roles: ["bounty", "escort"],
+    danger: 3,
+    tags: ["balanced", "swarm", "mixed"],
+    flavorText: "A skirmish line with a variable lead—expect a small twist.",
+    minSector: 3,
+    maxSector: null,
+    tiers: ["medium"],
+    varianceSlot: { index: 0, options: ["scout", "burner-drone"] }
+  }
+];
+
+const ELITE_ENCOUNTER_BUCKETS = [
+  {
+    id: "elite-breach-crew",
+    name: "Elite Breach Crew",
+    enemyIds: ["hunter", "interceptor"],
+    roles: ["bounty", "bounty"],
+    danger: 6,
+    tags: ["burst", "swarm", "elite-support"],
+    flavorText: "Two elite killers—answer with burst or get overwhelmed.",
+    minSector: 1,
+    maxSector: null
+  },
+  {
+    id: "elite-vanguard-screen",
+    name: "Elite Vanguard Screen",
+    enemyIds: ["burst-bounty", "support-escort"],
+    roles: ["bounty", "escort"],
+    danger: 6,
+    tags: ["defense", "burst", "elite-support"],
+    flavorText: "Spike damage behind a professional shield line.",
+    postCombatEffect: "defense-salvage",
+    bonusCredits: 8,
+    flavorOutcomeText: "Recovered hardened plating",
+    minSector: 1,
+    maxSector: null
+  },
+  {
+    id: "elite-xeno-pincer",
+    name: "Elite Xeno Pincer",
+    enemyIds: ["alien-parasite", "charger-drone"],
+    roles: ["bounty", "bounty"],
+    danger: 7,
+    tags: ["alien", "burst", "elite-support"],
+    flavorText: "Alien drain paired with elite overcharge—brutal sync.",
+    minSector: 2,
+    maxSector: null
+  },
+  {
+    id: "elite-heavy-surge",
+    name: "Elite Heavy Surge",
+    enemyIds: ["bulwark", "burst-bounty"],
+    roles: ["bounty", "bounty"],
+    danger: 7,
+    tags: ["siege", "burst", "defense"],
+    flavorText: "A wall and a cannon—siege pacing with burst finishers.",
+    minSector: 3,
+    maxSector: null
+  }
+];
+
+const PLANET_AMBUSH_BUCKETS = [
+  {
+    id: "p1-ambush-hunter",
+    name: "Planet Ambush — Hunter",
+    enemyIds: ["hunter"],
+    danger: 3,
+    tags: ["ambush", "burst", "balanced"],
+    flavorText: "Something fast waited in the ruins—strike first.",
+    postCombatEffect: "ambush-speed",
+    minSector: 1,
+    maxSector: 1
+  },
+  {
+    id: "p2-ambush-parasite",
+    name: "Planet Ambush — Parasite",
+    enemyIds: ["alien-parasite"],
+    danger: 4,
+    tags: ["ambush", "alien", "sustain"],
+    flavorText: "A parasite in the dust—don’t give it time to stabilize.",
+    minSector: 2,
+    maxSector: 2
+  },
+  {
+    id: "p3-ambush-interceptor",
+    name: "Planet Ambush — Ace",
+    enemyIds: ["interceptor"],
+    danger: 5,
+    tags: ["ambush", "burst", "swarm"],
+    flavorText: "An ace ambush—pure intercept pressure.",
+    minSector: 3,
+    maxSector: null
+  }
+];
+
+function defaultRolesForEnemyCount(n) {
+  if (n <= 1) return ["bounty"];
+  return ["bounty", "escort"];
+}
+
+function resolveBucketEnemyIds(bucket) {
+  const ids = bucket.enemyIds.slice();
+  if (bucket.varianceSlot) {
+    const { index, options } = bucket.varianceSlot;
+    ids[index] = pickRandom(options);
+  }
+  return ids;
+}
+
+function bucketMatchesTierRules(bucket, tier) {
+  if (!bucket.tiers.includes(tier)) return false;
+  const n = resolveBucketEnemyIds(bucket).length;
+  if (tier === "easy" && n !== 1) return false;
+  if (tier === "hard" && n !== 2) return false;
+  return true;
+}
+
+function filterEncounterBucketsForSectorAndTier(sectorNumber, tier) {
+  return ENCOUNTER_BUCKETS.filter(b => {
+    if (b.minSector != null && sectorNumber < b.minSector) return false;
+    if (b.maxSector != null && sectorNumber > b.maxSector) return false;
+    return bucketMatchesTierRules(b, tier);
+  });
+}
+
+const ENCOUNTER_TAG_SOFT_CAP = 3;
+
+function getEncounterBucketWeight(bucket, tagCounts, routeIdentity) {
+  let w = 1;
+  for (const tag of bucket.tags || []) {
+    const c = tagCounts[tag] || 0;
+    if (c >= ENCOUNTER_TAG_SOFT_CAP) w *= 0.1;
+    else if (c >= 2) w *= 0.42;
+  }
+  if (routeIdentity && routeIdentity.preferredTags && routeIdentity.preferredTags.length) {
+    const prefs = routeIdentity.preferredTags;
+    const overlap = (bucket.tags || []).filter(t => prefs.includes(t)).length;
+    if (overlap > 0) w *= 1 + 0.32 * overlap;
+  }
+  return Math.max(0.04, w);
+}
+
+function pickWeightedEncounterBucket(pool, tagCounts, routeIdentity) {
+  if (!pool.length) return null;
+  const tc = tagCounts || {};
+  const weights = pool.map(b => getEncounterBucketWeight(b, tc, routeIdentity));
+  const total = weights.reduce((s, x) => s + x, 0);
+  let r = Math.random() * total;
+  for (let i = 0; i < pool.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return pool[i];
+  }
+  return pool[pool.length - 1];
+}
+
+function recordEncounterTagDistribution(bucket) {
+  if (!bucket || !state.run) return;
+  if (!state.run.encounterTagCounts) state.run.encounterTagCounts = {};
+  const tc = state.run.encounterTagCounts;
+  for (const tag of bucket.tags || []) {
+    tc[tag] = (tc[tag] || 0) + 1;
+  }
+  console.log("[tag distribution]", { ...tc });
+}
+
+function pickEncounterBucketForRun(sectorNumber, tier) {
+  const pool = filterEncounterBucketsForSectorAndTier(sectorNumber, tier);
+  if (!pool.length) return null;
+  const tagCounts = state.run?.encounterTagCounts || {};
+  const node = getCurrentNode();
+  const ri = node ? getRouteIdentityForMapNode(node) : null;
+  if (node && ri) {
+    console.log("[route identity]", node.id, ri.routeType, ri.preferredTags);
+  }
+  return pickWeightedEncounterBucket(pool, tagCounts, ri);
+}
+
+function filterEliteBucketsForSector(sectorNumber) {
+  return ELITE_ENCOUNTER_BUCKETS.filter(b => {
+    if (b.minSector != null && sectorNumber < b.minSector) return false;
+    if (b.maxSector != null && sectorNumber > b.maxSector) return false;
+    return true;
+  });
+}
+
+function pickEliteEncounterBucket(sectorNumber) {
+  const pool = filterEliteBucketsForSector(sectorNumber);
+  if (!pool.length) return null;
+  const tagCounts = state.run?.encounterTagCounts || {};
+  const node = getCurrentNode();
+  const ri = node ? getRouteIdentityForMapNode(node) : null;
+  if (node && ri) {
+    console.log("[route identity]", node.id, ri.routeType, ri.preferredTags);
+  }
+  return pickWeightedEncounterBucket(pool, tagCounts, ri);
+}
+
+function filterPlanetAmbushBucketsForSector(sectorNumber) {
+  return PLANET_AMBUSH_BUCKETS.filter(b => {
+    if (b.minSector != null && sectorNumber < b.minSector) return false;
+    if (b.maxSector != null && sectorNumber > b.maxSector) return false;
+    return true;
+  });
+}
+
+function pickPlanetAmbushBucket(sectorNumber) {
+  const pool = filterPlanetAmbushBucketsForSector(sectorNumber);
+  if (!pool.length) return null;
+  const tagCounts = state.run?.encounterTagCounts || {};
+  const node = getCurrentNode();
+  const ri = node ? getRouteIdentityForMapNode(node) : null;
+  if (node && ri) {
+    console.log("[route identity]", node.id, ri.routeType, ri.preferredTags);
+  }
+  return pickWeightedEncounterBucket(pool, tagCounts, ri);
+}
+
+function buildEnemiesFromEncounterBucket(bucket, tier) {
+  const ids = resolveBucketEnemyIds(bucket);
+  const roles = bucket.roles || defaultRolesForEnemyCount(ids.length);
+  return ids.map((id, i) => {
+    const template = getEnemyTypeById(id);
+    if (!template) return null;
+    return buildEnemyFromTemplate(template, roles[i], tier);
+  }).filter(Boolean);
+}
+
+function formatEncounterTagForDisplay(tag) {
+  if (!tag || typeof tag !== "string") return "";
+  return tag
+    .split("-")
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function formatEncounterTagsList(tags) {
+  return (tags || []).map(formatEncounterTagForDisplay).join(", ");
+}
+
+function filterEncounterBucketsForSectorPreview(sectorNumber) {
+  return ENCOUNTER_BUCKETS.filter(b => {
+    if (b.minSector != null && sectorNumber < b.minSector) return false;
+    if (b.maxSector != null && sectorNumber > b.maxSector) return false;
+    return true;
+  });
+}
+
+function collectSoftEncounterTagsForMap(sectorNumber, isElite) {
+  const pool = isElite
+    ? filterEliteBucketsForSector(sectorNumber)
+    : filterEncounterBucketsForSectorPreview(sectorNumber);
+  const set = new Set();
+  for (const b of pool) {
+    for (const t of b.tags || []) {
+      set.add(t);
+    }
+  }
+  return [...set].sort();
+}
+
+function getSoftEncounterPreviewLine(sectorNumber, isElite) {
+  const tags = collectSoftEncounterTagsForMap(sectorNumber, isElite);
+  if (!tags.length) return "";
+  const shown = tags.slice(0, 6);
+  return `Possible threat patterns: ${formatEncounterTagsList(shown)}`;
+}
+
+function getEncounterMapFlavorHtml(node) {
+  if (!node || (node.type !== "combat" && node.type !== "elite")) return "";
+  if (isNodeCleared(node.id)) return "";
+  const line = getSoftEncounterPreviewLine(state.sectorNumber, node.type === "elite");
+  if (!line) return "";
+  return `<div class="reward-meta map-encounter-preview">${line}</div>`;
+}
+
+function logEncounterIntroFromBucket(bucket) {
+  if (!bucket) return;
+  console.log("[encounter tags]", bucket.id, bucket.tags);
+  log(`Contact: ${bucket.name}`, "system");
+  const tags = bucket.tags || [];
+  if (tags.length) {
+    log(`Threat pattern: ${formatEncounterTagsList(tags)}`, "system");
+  }
+  if (bucket.flavorText) {
+    log(bucket.flavorText, "system");
+  }
+}
+
+function resolveEncounterBucketOutcomes() {
+  const bucket = state.lastEncounterBucket;
+  state.rewardChoiceBonus = 0;
+  state.encounterCreditRewardModifier = 1;
+
+  if (!bucket) {
+    console.log("[encounter outcome]", null, "none");
+    return 0;
+  }
+
+  let extraCredits = 0;
+  let effect = "none";
+  const pe = bucket.postCombatEffect;
+
+  if (typeof bucket.bonusFuel === "number" && bucket.bonusFuel > 0) {
+    const f = bucket.bonusFuel;
+    state.run.fuel = Math.min(state.player.maxFuel, state.run.fuel + f);
+    syncPlayerFuelFromRun();
+    console.log("[fuel remaining]", state.run.fuel);
+    log(`Encounter bonus: Fuel recovered (+${f} fuel)`, "system");
+    effect = "bonus-fuel";
+  }
+
+  if (pe === "defense-salvage") {
+    const c = bucket.bonusCredits ?? 10;
+    gainCredits(c, "encounter outcome");
+    extraCredits += c;
+    const label = bucket.flavorOutcomeText || "Salvaged plating";
+    log(`Encounter bonus: ${label} (+${c} credits)`, "system");
+    effect = "defense-salvage";
+  } else if (pe === "alien-residue") {
+    const c = bucket.bonusCredits ?? 5;
+    gainCredits(c, "encounter outcome");
+    extraCredits += c;
+    const label = bucket.flavorOutcomeText || "Strange salvage";
+    log(`Encounter bonus: ${label} (+${c} credits)`, "system");
+    effect = "alien-residue";
+  } else if (pe === "swarm-options") {
+    state.rewardChoiceBonus = 1;
+    log(
+      `Encounter bonus: ${bucket.flavorOutcomeText || "Extra salvage options on the reward screen."}`,
+      "system"
+    );
+    effect = "swarm-options";
+  } else if (pe === "burn-pressure") {
+    if (state.turn > 5) {
+      state.player.hull = Math.max(1, state.player.hull - 3);
+      log("Encounter consequence: Hull scorched (-3 hull)", "system");
+      effect = "hull-scorched";
+    } else {
+      const c = 5;
+      gainCredits(c, "encounter outcome");
+      extraCredits += c;
+      log("Encounter bonus: Clean thermal break (+5 credits)", "system");
+      effect = "thermal-clean";
+    }
+  } else if (pe === "ambush-speed") {
+    if (state.turn <= 4) {
+      const c = 15;
+      gainCredits(c, "encounter outcome");
+      extraCredits += c;
+      log("Encounter bonus: Fast ambush clearance (+15 credits)", "system");
+      effect = "ambush-fast";
+    } else {
+      log("Encounter consequence: Slow ambush extraction (no speed bonus)", "system");
+      effect = "ambush-slow";
+    }
+  }
+
+  if (typeof bucket.rewardModifier === "number" && bucket.rewardModifier > 0 && bucket.rewardModifier !== 1) {
+    state.encounterCreditRewardModifier = bucket.rewardModifier;
+    if (effect === "none" || effect === "bonus-fuel") {
+      effect = "credit-modifier";
+    }
+  }
+
+  console.log("[encounter outcome]", bucket.id, effect);
+  return extraCredits;
+}
+
 const ENCOUNTER_TEMPLATES = [
   {
     id: "duel",
     tier: "easy",
     build(encounterIndex, tier) {
-      const bounty = ENEMY_TYPES[Math.min(encounterIndex + 1, ENEMY_TYPES.length - 1)];
+      const indexed = ENEMY_TYPES[Math.min(encounterIndex + 1, ENEMY_TYPES.length - 1)];
+      const bounty = Math.random() < 0.55 ? pickVarietyEnemy() : indexed;
       return [buildEnemyFromTemplate(bounty, "bounty", tier)];
     }
   },
@@ -4251,7 +6650,11 @@ function beginEncounter() {
   state.victoryFuelGranted = false;
   state.planetAlienAmbushCombat = false;
   state.eliteContractCombat = false;
+  state.lastEncounterBucket = null;
+  state.rewardChoiceBonus = 0;
+  state.encounterCreditRewardModifier = 1;
 
+  let encounterBucketForIntro = null;
   let tier;
   if (state.pendingBoss) {
     state.inBossCombat = true;
@@ -4264,28 +6667,61 @@ function beginEncounter() {
     state.planetAlienAmbushCombat = true;
     tier = "medium";
     state.encounterTier = tier;
-    state.enemies = PLANET_ALIEN_AMBUSH_TEMPLATE.build(state.encounterIndex, tier);
+    const pBucket = pickPlanetAmbushBucket(state.sectorNumber);
+    if (pBucket) {
+      encounterBucketForIntro = pBucket;
+      console.log("[encounter bucket]", pBucket.id, pBucket.name, pBucket.enemyIds);
+      state.enemies = buildEnemiesFromEncounterBucket(pBucket, tier);
+      recordEncounterTagDistribution(pBucket);
+    } else {
+      state.enemies = PLANET_ALIEN_AMBUSH_TEMPLATE.build(state.encounterIndex, tier);
+    }
   } else if (state.pendingEliteContract) {
     state.pendingEliteContract = false;
     state.eliteContractCombat = true;
     tier = "elite";
     state.encounterTier = tier;
-    const template = pickRandom(ELITE_CONTRACT_TEMPLATES);
-    state.enemies = template.build(state.encounterIndex, tier).slice(0, 2);
+    const eBucket = pickEliteEncounterBucket(state.sectorNumber);
+    if (eBucket) {
+      encounterBucketForIntro = eBucket;
+      console.log("[encounter bucket]", eBucket.id, eBucket.name, eBucket.enemyIds);
+      state.enemies = buildEnemiesFromEncounterBucket(eBucket, tier).slice(0, 2);
+      recordEncounterTagDistribution(eBucket);
+    } else {
+      const template = pickRandom(ELITE_CONTRACT_TEMPLATES);
+      state.enemies = template.build(state.encounterIndex, tier).slice(0, 2);
+    }
   } else if (state.encounterIndex > 0) {
     const allowed = getAllowedTiersForEncounter(state.encounterIndex);
     tier = pickRandom(allowed);
     state.encounterTier = tier;
-    const template = getCurrentEncounterTemplate(tier);
-    state.enemies = template.build(state.encounterIndex, tier).slice(0, 2);
+    const bucket = pickEncounterBucketForRun(state.sectorNumber, tier);
+    if (bucket) {
+      encounterBucketForIntro = bucket;
+      console.log("[encounter bucket]", bucket.id, bucket.name, bucket.enemyIds);
+      state.enemies = buildEnemiesFromEncounterBucket(bucket, tier).slice(0, 2);
+      recordEncounterTagDistribution(bucket);
+    } else {
+      const template = getCurrentEncounterTemplate(tier);
+      state.enemies = template.build(state.encounterIndex, tier).slice(0, 2);
+    }
   } else {
     const allowed = getAllowedTiersForEncounter(state.encounterIndex);
     tier = pickRandom(allowed);
     state.encounterTier = tier;
-    const template = getCurrentEncounterTemplate(tier);
-    state.enemies = template.build(state.encounterIndex, tier).slice(0, 2);
+    const bucket = pickEncounterBucketForRun(state.sectorNumber, tier);
+    if (bucket) {
+      encounterBucketForIntro = bucket;
+      console.log("[encounter bucket]", bucket.id, bucket.name, bucket.enemyIds);
+      state.enemies = buildEnemiesFromEncounterBucket(bucket, tier).slice(0, 2);
+      recordEncounterTagDistribution(bucket);
+    } else {
+      const template = getCurrentEncounterTemplate(tier);
+      state.enemies = template.build(state.encounterIndex, tier).slice(0, 2);
+    }
   }
-  state.selectedEnemyUid = getDefaultTargetUid();
+  state.lastEncounterBucket = encounterBucketForIntro;
+  state.selectedEnemyUid = null;
   state.drawPile = shuffle(state.runDeck.map(id => makeCard(id)));
   state.discardPile = [];
   state.exhaustPile = [];
@@ -4317,7 +6753,12 @@ function beginEncounter() {
 
   hideOverlay();
 
+  if (encounterBucketForIntro) {
+    logEncounterIntroFromBucket(encounterBucketForIntro);
+  }
+
   if (state.inBossCombat) {
+    log(`Boss Encounter: ${getSectorBossName(state.sectorNumber)}`, "enemy");
     log(
       `Encounter ${state.encounterIndex + 1} begins (BOSS • ${getSectorBossName(state.sectorNumber)}).`,
       "enemy"
@@ -4329,7 +6770,7 @@ function beginEncounter() {
     );
   }
 
-  drawCards(5);
+  drawCards(5 + (state.player.handDrawBonus || 0));
   updateEnemyIntent();
   render();
 }
@@ -4348,6 +6789,9 @@ function startRun(selectedShipId = "heavy-fighter") {
     shieldBonus: 0,
     reactorBonus: 0,
     burnBonus: 0,
+    runBurnBonus: 0,
+    runBeamGenerationBonus: 0,
+    markOnApplyDamage: 0,
     snub: isExplorationShip
       ? {
           alive: true,
@@ -4356,8 +6800,9 @@ function startRun(selectedShipId = "heavy-fighter") {
           respawnCounter: 0
         }
       : null,
-    maxFuel: 100,
-    fuel: 100
+    maxFuel: CAMPAIGN_MAX_FUEL,
+    fuel: CAMPAIGN_MAX_FUEL,
+    handDrawBonus: 0
   };
   ensureSnubState();
 
@@ -4369,6 +6814,9 @@ function startRun(selectedShipId = "heavy-fighter") {
   state.encounterIndex = 0;
   state.rewardChoices = [];
   state.pendingReward = false;
+  state.lastEncounterBucket = null;
+  state.rewardChoiceBonus = 0;
+  state.encounterCreditRewardModifier = 1;
   state.pendingPlanetAlienAmbush = false;
   state.planetAlienAmbushCombat = false;
   state.pendingEliteContract = false;
@@ -4379,6 +6827,7 @@ function startRun(selectedShipId = "heavy-fighter") {
   state.sectorNumber = 1;
   state.notoriety = 0;
   state.bossCount = 0;
+  state.bossEncounterId = pickRandomBossEncounterId();
   state.endlessMode = false;
   state.run = {
     archetypeBias: {
@@ -4403,19 +6852,30 @@ function startRun(selectedShipId = "heavy-fighter") {
     },
     committedArchetype: null,
     encounterCount: 0,
-    miniComboSynergyShown: false
+    miniComboSynergyShown: false,
+    commitMomentUsed: false,
+    encounterTagCounts: {},
+    fuel: CAMPAIGN_MAX_FUEL
   };
+  state.player.fuel = state.run.fuel;
+  applyFuelCapForRunState();
+  console.log("[fuel tuning]", "sector", state.sectorNumber, "fuel", state.run.fuel, "max", state.player.maxFuel);
   els.log.innerHTML = "";
 
   hideComboBanner();
 
   state.mapNodes = createSectorByNumber(state.sectorNumber);
+  if (state.sectorNumber <= 3) {
+    console.log("[campaign route map]", state.sectorNumber, state.mapNodes);
+  }
   state.currentNodeId = "S";
   state.visitedNodeIds = ["S"];
+  state.lockedNodeIds = [];
   state.clearedNodeIds = [];
   state.currentScreen = "map";
   log(`Ship selected: ${getShipDisplayName(state.selectedShipId)}.`, "system");
 
+  closeMiningMinigameIfOpen();
   hideOverlay();
   render();
 }
@@ -4423,6 +6883,11 @@ function startRun(selectedShipId = "heavy-fighter") {
 function gainPlayerBlock(amount, sourceName) {
   state.player.block += amount;
   log(`${sourceName} grants ${amount} block.`, "system");
+  if (amount > 0) {
+    applyPlayerBlockFlash();
+    const pg = document.getElementById("playerGroup");
+    spawnFloatingTextNearElement(pg, `+${amount}`, "block-gain-text");
+  }
 }
 
 function gainEnemyBlock(amount, sourceName) {
@@ -4437,6 +6902,10 @@ function repairPlayerHull(amount, sourceName) {
   state.player.hull = Math.min(state.player.maxHull, state.player.hull + amount);
   const repaired = state.player.hull - before;
   log(`${sourceName} repairs ${repaired} hull.`, "system");
+  if (repaired > 0) {
+    const pg = document.getElementById("playerGroup");
+    spawnFloatingTextNearElement(pg, `+${repaired}`, "heal-text");
+  }
 }
 
 function dealAttackDamageToEnemy(baseAmount, sourceName) {
@@ -4459,6 +6928,11 @@ function dealDamageToEnemy(amount, sourceName) {
   const enemy = getSelectedEnemy();
   if (!enemy) return;
 
+  const lockBonus = enemy.extraDamageFromLockThisTurn || 0;
+  if (lockBonus > 0) {
+    amount += lockBonus;
+  }
+
   if (enemy.trait === "overcharged") {
     amount = Math.floor(amount * 1.5);
     log(`${enemy.name} destabilizes under the hit.`, "system");
@@ -4472,40 +6946,45 @@ function dealDamageToEnemy(amount, sourceName) {
 
   enemy.block -= blocked;
   enemy.hull = Math.max(0, enemy.hull - hpDamage);
+  if (!Number.isFinite(enemy.hull)) enemy.hull = 0;
 
-  if (blocked > 0 && hpDamage > 0) {
-    log(`${sourceName} hits for ${amount}. Enemy blocks ${blocked} and takes ${hpDamage}.`);
-  } else if (blocked >= amount) {
-    log(`${sourceName} hits for ${amount}, but enemy blocks it all.`);
-  } else {
-    log(`${sourceName} deals ${hpDamage} damage.`, sourceName === "Missile" ? "missile" : "");
-  }
-
-  if (amount >= 10) log("⚡ LASER LOCKED!", "system");
-  if (amount >= 20) log("🔥 FULL BEAM RELEASE!", "system");
-  if (amount >= 30) log("💀 ANNIHILATION!", "system");
-
-  if (amount >= 10) showComboBanner("⚡ LASER LOCKED");
-  if (amount >= 20) showComboBanner("🔥 FULL BEAM RELEASE");
-  if (amount >= 30) showComboBanner("💀 ANNIHILATION");
-
-  if (enemy.hull <= 0) {
-    log(`${enemy.name} is destroyed.`, "system");
-  }
-
-  if (!state.combatEnded && allBountyTargetsDead() && anyEscortAlive() && !state.pendingExtraction) {
-    showExtractionOverlay();
-    return;
-  }
-
-  if (allEnemiesDead()) {
-    state.combatEnded = true;
-    if (state.encounterIndex >= RUN_LENGTH - 1) {
-      state.runWon = true;
-      log("All targets eliminated. Run complete.", "system");
-    } else {
-      log("Encounter cleared.", "system");
+  try {
+    const enemyHitEl = document.querySelector(`.enemy-unit[data-enemy-uid="${enemy.uid}"]`);
+    if (enemyHitEl) {
+      if (hpDamage > 0) {
+        spawnFloatingTextNearElement(enemyHitEl, `−${hpDamage}`, "damage-text");
+      } else if (blocked > 0 && amount > 0) {
+        spawnFloatingTextNearElement(enemyHitEl, `−${blocked}`, "block-text");
+      }
+      applyEnemyDamageFlash(enemyHitEl);
+      enemyHitEl.classList.remove("enemy-hit-shake");
+      void enemyHitEl.offsetWidth;
+      enemyHitEl.classList.add("enemy-hit-shake");
+      setTimeout(() => enemyHitEl.classList.remove("enemy-hit-shake"), 420);
+      if (hpDamage >= 6 || amount >= 10) applyBattlefieldShake();
     }
+
+    if (blocked > 0 && hpDamage > 0) {
+      log(`${sourceName} hits for ${amount}. Enemy blocks ${blocked} and takes ${hpDamage}.`);
+    } else if (blocked >= amount) {
+      log(`${sourceName} hits for ${amount}, but enemy blocks it all.`);
+    } else {
+      log(`${sourceName} deals ${hpDamage} damage.`, sourceName === "Missile" ? "missile" : "");
+    }
+
+    if (amount >= 10) log("⚡ LASER LOCKED!", "system");
+    if (amount >= 20) log("🔥 FULL BEAM RELEASE!", "system");
+    if (amount >= 30) log("💀 ANNIHILATION!", "system");
+
+    if (amount >= 10) showComboBanner("⚡ LASER LOCKED");
+    if (amount >= 20) showComboBanner("🔥 FULL BEAM RELEASE");
+    if (amount >= 30) showComboBanner("💀 ANNIHILATION");
+
+    if (enemyHullValue(enemy) <= 0) {
+      log(`${enemy.name} is destroyed.`, "system");
+    }
+  } finally {
+    resolveCombatAfterDamageIfNeeded();
   }
 }
 
@@ -4538,18 +7017,18 @@ function dealDamageToPlayer(amount, sourceName) {
   state.player.hull = Math.max(0, state.player.hull - hpDamage);
 
   if (blocked > 0) {
-    spawnFloatingTextNearElement(playerUnitEl, `Block -${blocked}`, "block-text");
+    spawnFloatingTextNearElement(playerUnitEl, `−${blocked}`, "block-mitigate-text");
     applyHitFlash(playerUnitEl);
   }
   if (snubDamage > 0) {
-    spawnFloatingTextNearElement(snubUnitEl, `-${snubDamage}`, "snub-text");
+    spawnFloatingTextNearElement(snubUnitEl, `−${snubDamage}`, "snub-text");
     applyHitFlash(snubUnitEl);
     if (state.selectedShipId === "exploration-vessel" && state.player.snub && !state.player.snub.alive) {
       spawnFloatingTextNearElement(snubUnitEl, "Snub Destroyed", "snub-destroyed-text");
     }
   }
   if (hpDamage > 0) {
-    spawnFloatingTextNearElement(playerUnitEl, `-${hpDamage}`, "damage-text");
+    spawnFloatingTextNearElement(playerUnitEl, `−${hpDamage}`, "player-damage-text");
     applyHitFlash(playerUnitEl);
   }
   if (blocked > 0 || snubDamage > 0 || hpDamage > 0) {
@@ -4610,15 +7089,27 @@ function updateEnemyIntent() {
   state.enemies.forEach(enemy => {
     if (enemy.hull <= 0) return;
     enemy.intent = enemy.getIntent(state.turn);
+    if (enemy.intent) {
+      console.log("[enemy intent]", enemy.name, enemy.intent.intentType || enemy.intent.type);
+    }
   });
 }
 
 function getIntentDescription(intent) {
+  if (intent.intentType === "charging") return "Stores energy — big attack next turn.";
+  if (intent.intentType === "discharge") return "Fires a charged volley.";
+  if (intent.intentType === "self-shield") return "Reinforces its own shields.";
+  if (intent.intentType === "ally-shield") return "Passes block to an ally — kill or CC the defender first.";
+  if (intent.intentType === "burn-burst") return "Small hit; unstable core stacks Burn on itself.";
+  if (intent.intentType === "drain") return "Strike that heals the parasite if it cuts hull.";
+  if (intent.intentType === "brace") return "Turtles briefly between drain strikes.";
   switch (intent.type) {
     case "attack":
       return `Enemy will attack for ${intent.amount}.`;
     case "block":
       return `Enemy will gain ${intent.amount} block on its turn.`;
+    case "ally-block":
+      return `Ally will gain ${intent.amount} block from this unit.`;
     case "disrupt":
       return "Enemy will disrupt your systems.";
     default:
@@ -4626,19 +7117,108 @@ function getIntentDescription(intent) {
   }
 }
 
-function playCard(uid) {
-  if (state.combatEnded || state.pendingReward || state.pendingExtraction) return;
+function cardRequiresEnemyTarget(card) {
+  if (!card || typeof card.effect !== "function") return false;
+  const source = card.effect.toString();
+  return (
+    source.includes("getSelectedEnemy(") ||
+    source.includes("dealAttackDamageToEnemy(") ||
+    source.includes("dealDamageToEnemy(")
+  );
+}
+
+function cardSupportsPlayerDropTarget(card) {
+  if (!card || typeof card.effect !== "function") return false;
+  if (cardRequiresEnemyTarget(card)) return false;
+
+  const explicitSelfTargetIds = new Set([
+    "basic-block",
+    "reinforce-shields",
+    "tactical-reposition",
+    "defense-matrix",
+    "guard-shift",
+    "braced-strike",
+    "heat-shielding",
+    "heat-sink",
+    "shield-harvest",
+    "escort-protocol",
+    "spare-plating"
+  ]);
+  if (explicitSelfTargetIds.has(card.id)) return true;
+
+  const source = card.effect.toString();
+  return (
+    source.includes("gainPlayerBlock(") ||
+    source.includes("repairPlayerHull(") ||
+    source.includes("state.player.energy +=")
+  );
+}
+
+function playCardOnEnemy(uid, enemyUid) {
+  const enemy = getEnemyByUid(enemyUid);
+  if (!enemy || enemyHullValue(enemy) <= 0) return;
+  state.selectedEnemyUid = enemyUid;
+  playCard(uid, enemyUid);
+}
+
+function playCardOnPlayer(uid) {
+  playCard(uid);
+}
+
+function playCard(uid, forcedEnemyUid = null) {
+  if (state.pendingReward || state.pendingExtraction) return;
+  if (state.combatEnded) {
+    try {
+      render();
+    } finally {
+      handleCombatEnd();
+    }
+    return;
+  }
 
   const card = state.hand.find(c => c.uid === uid);
   if (!card) return;
-  if (card.cost > state.player.energy) return;
+  if (cardRequiresEnemyTarget(card) && !forcedEnemyUid) {
+    log("Drag this card onto an enemy to target it.", "system");
+    return;
+  }
+  const cost = cardPlayCost(card);
+  const energy = playerEnergyPlayable();
+  if (cost > energy) return;
 
-  state.player.energy -= card.cost;
+  state.player.energy = energy - cost;
+
+  const cardEl = document.querySelector(`.hand [data-card-uid="${uid}"]`);
+  if (cardEl) {
+    cardEl.classList.remove("card-play-pop");
+    void cardEl.offsetWidth;
+    cardEl.classList.add("card-play-pop");
+    setTimeout(() => cardEl.classList.remove("card-play-pop"), 320);
+  }
 
   const removed = removeCardFromHand(uid);
   if (!removed) return;
 
+  applyCombatCardPlayJuice();
+
+  const targetEnemy = getSelectedEnemy();
+  const markBefore = targetEnemy ? targetEnemy.markStacks || 0 : 0;
+  const beamBefore = targetEnemy ? targetEnemy.beamCharge || 0 : 0;
+
   removed.effect();
+
+  if (targetEnemy) {
+    if (
+      state.player.markOnApplyDamage &&
+      (targetEnemy.markStacks || 0) > markBefore
+    ) {
+      dealAttackDamageToEnemy(state.player.markOnApplyDamage, "Mark commitment");
+    }
+    if (state.player.runBeamGenerationBonus && (targetEnemy.beamCharge || 0) > beamBefore) {
+      targetEnemy.beamCharge =
+        (targetEnemy.beamCharge || 0) + state.player.runBeamGenerationBonus;
+    }
+  }
 
   if (removed.exhaust || removed.type === "missile" || removed.type === "torpedo") {
     state.exhaustPile.push(removed);
@@ -4647,10 +7227,13 @@ function playCard(uid) {
     state.discardPile.push(removed);
   }
 
-  render();
-
-  if (state.combatEnded) {
-    handleCombatEnd();
+  try {
+    render();
+  } finally {
+    resolveCombatAfterDamageIfNeeded();
+    if (state.combatEnded) {
+      handleCombatEnd();
+    }
   }
 }
 
@@ -4685,6 +7268,10 @@ function resolveEnemyTurn() {
       state.player.drones = Math.max(0, (state.player.drones || 0) - 1);
       dealDamageToPlayer(1, `${enemy.name} flak burst`);
       log(`${enemy.name} scatters your drone formation.`, "enemy");
+    }
+    if (enemy.counter === "burn-spray") {
+      enemy.burnStacks = (enemy.burnStacks || 0) + 2;
+      log(`${enemy.name} core runs hot (+2 self Burn).`, "enemy");
     }
 
     const intent = enemy.intent;
@@ -4727,8 +7314,15 @@ function resolveEnemyTurn() {
           }
           enemy.sentinelIgnoreBlockNext = false;
         }
-        dealDamageToPlayer(finalAmount, enemy.name);
-        if (enemy.trait === "jammer" && finalAmount > 0) {
+        const attackBonus = getEnemySynergyAttackBonus(enemy, alive, intent);
+        const totalDamage = Math.max(0, finalAmount + attackBonus);
+        const hullBefore = state.player.hull;
+        dealDamageToPlayer(totalDamage, enemy.name);
+        if (enemy.counter === "parasite" && state.player.hull < hullBefore) {
+          enemy.hull = Math.min(enemy.maxHull, enemy.hull + 2);
+          log(`${enemy.name} feeds on hull damage (+2 hull).`, "enemy");
+        }
+        if (enemy.trait === "jammer" && totalDamage > 0) {
           state.player.energy = Math.max(0, state.player.energy - 1);
           log(`${enemy.name} jams your systems. Lose 1 energy.`, "enemy");
         }
@@ -4738,9 +7332,30 @@ function resolveEnemyTurn() {
       case "block":
         gainEnemyBlock(intent.amount, enemy.name);
         break;
+      case "ally-block": {
+        const ally = pickAllyBlockTarget(enemy, alive);
+        if (ally) {
+          ally.block = (ally.block || 0) + intent.amount;
+          const syn =
+            ally.combatRole === "charger" || ally.combatRole === "parasite" ? " (formation synergy)" : "";
+          log(`${ally.name} gains ${intent.amount} block from ${enemy.name}'s shield link${syn}.`, "enemy");
+        } else {
+          gainEnemyBlock(intent.amount, enemy.name);
+        }
+        break;
+      }
       case "disrupt":
         applySentinelDisruption(enemy);
         break;
+    }
+
+    if (enemy.counter === "parasite" && enemy.turnCounter % 2 === 0) {
+      const others = alive.filter(e => e.uid !== enemy.uid && e.hull > 0);
+      if (others.length) {
+        const t = others[0];
+        t.burnStacks = (t.burnStacks || 0) + 2;
+        log(`${enemy.name} spreads spores to ${t.name} (+2 Burn).`, "enemy");
+      }
     }
 
     enemy.attackReduction = 0;
@@ -4792,6 +7407,26 @@ function applySentinelDisruption(enemy) {
 }
 
 function handleBossBehavior(enemy) {
+  if (enemy.bossType === "bastion") {
+    enemy.block = (enemy.block || 0) + 6;
+  }
+
+  if (enemy.bossType === "hive-mind") {
+    const drones = state.enemies.filter(e => e.hiveDrone && e.hull > 0);
+    if (drones.length > 0) {
+      enemy.hull = Math.min(enemy.maxHull, enemy.hull + 3);
+      log("Hive Mind feeds on linked drones (+3 hull).", "enemy");
+    }
+    const droneCount = drones.length;
+    if (enemy.turnCounter % 3 === 0 && droneCount < 2) {
+      const alive = state.enemies.filter(e => e.hull > 0).length;
+      if (alive < 4) {
+        spawnHiveDrone();
+        log("Spawning drones.", "enemy");
+      }
+    }
+  }
+
   if (enemy.bossType === "patrol-commander") {
     enemy.block += 4;
 
@@ -4829,8 +7464,28 @@ function spawnEscortEnemy() {
   state.enemies.push(escort);
 }
 
+function spawnHiveDrone() {
+  const droneTemplate = getEnemyTypeById("scout") || ENEMY_TYPES[0];
+  const drone = buildEnemyFromTemplate(droneTemplate, "bounty", "medium");
+  drone.hiveDrone = true;
+  drone.name = "Hive Drone";
+  state.enemies.push(drone);
+}
+
 function endTurn() {
-  if (state.combatEnded || state.pendingReward || state.pendingExtraction) return;
+  if (state.pendingReward || state.pendingExtraction) return;
+  if (state.combatEnded) {
+    try {
+      render();
+    } finally {
+      handleCombatEnd();
+    }
+    return;
+  }
+
+  state.enemies.forEach(enemy => {
+    enemy.extraDamageFromLockThisTurn = 0;
+  });
 
   discardHand();
   log("You end your turn.");
@@ -4843,20 +7498,34 @@ function endTurn() {
   resolveEnemyTurn();
 
   state.enemies.forEach(enemy => {
-    if (enemy.hull <= 0) return;
-    const burnDamage = (enemy.burnStacks || 0) + (state.player.burnBonus || 0);
+    if (enemyHullValue(enemy) <= 0) return;
+    const burnDamage =
+      (enemy.burnStacks || 0) +
+      (state.player.burnBonus || 0) +
+      (state.player.runBurnBonus || 0);
     if (burnDamage <= 0) return;
     enemy.hull = Math.max(0, enemy.hull - burnDamage);
+    if (!Number.isFinite(enemy.hull)) enemy.hull = 0;
     log(`${enemy.name} suffers ${burnDamage} Burn damage.`, "system");
+    const burnEl = document.querySelector(`.enemy-unit[data-enemy-uid="${enemy.uid}"]`);
+    if (burnEl) {
+      spawnFloatingTextNearElement(burnEl, `−${burnDamage}`, "burn-damage-text");
+    }
   });
 
-  if (allEnemiesDead()) {
-    state.combatEnded = true;
-  }
+  state.enemies.forEach(enemy => {
+    if (enemyHullValue(enemy) <= 0) return;
+    enemy.beamCharge = Math.max(0, (enemy.beamCharge || 0) - 1);
+  });
+
+  resolveCombatAfterDamageIfNeeded();
 
   if (state.combatEnded) {
-    render();
-    handleCombatEnd();
+    try {
+      render();
+    } finally {
+      handleCombatEnd();
+    }
     return;
   }
 
@@ -4886,22 +7555,7 @@ function endTurn() {
   state.player.energy = state.player.baseEnergy + state.player.reactorBonus;
 
   updateEnemyIntent();
-  drawCards(5);
-  render();
-}
-
-function redrawHand() {
-  if (state.combatEnded || state.pendingReward || state.pendingExtraction) return;
-
-  if (state.player.energy < 1) {
-    log("You need 1 energy to redraw.", "system");
-    return;
-  }
-
-  state.player.energy -= 1;
-  discardHand();
-  drawCards(5);
-  log("You spend 1 energy to redraw your hand.", "system");
+  drawCards(5 + (state.player.handDrawBonus || 0));
   render();
 }
 
@@ -4919,12 +7573,16 @@ function handleCombatEnd() {
     );
     return;
   }
+  if (state.pendingReward || state.pendingExtraction) return;
   if (state.run) {
     state.run.encounterCount = (state.run.encounterCount || 0) + 1;
   }
+  state.encounterIndex = (state.encounterIndex || 0) + 1;
 
   gainCredits(5, "combat cleanup bonus");
   earnedNow += 5;
+
+  earnedNow += resolveEncounterBucketOutcomes();
 
   const currentNode = getCurrentNode();
   if (
@@ -4937,6 +7595,14 @@ function handleCombatEnd() {
   }
 
   if (state.combatEnded && currentNode && currentNode.type === "elite") {
+    state.gateUnlocked = true;
+  }
+  if (
+    state.combatEnded &&
+    currentNode &&
+    Array.isArray(currentNode.neighbors) &&
+    currentNode.neighbors.includes("BG")
+  ) {
     state.gateUnlocked = true;
   }
 
@@ -4954,25 +7620,29 @@ function handleCombatEnd() {
 
   state.lastCombatCreditsEarned = earnedNow;
 
+  if (state.runWon) {
+    state.pendingReward = true;
+    showOverlay(
+      "Run Complete",
+      "You finished the 30-combat campaign route.",
+      "Restart Run",
+      () => startRun()
+    );
+    return;
+  }
+
   if (state.inBossCombat) {
     state.bossCount += 1;
     if (!state.endlessMode && state.bossCount >= 3) {
       state.endlessMode = true;
       state.notoriety = 4;
       log("Endless mode unlocked. Notoriety set to Hunted.", "system");
+      applyFuelCapForRunState();
+      state.run.fuel = state.player.maxFuel;
+      syncPlayerFuelFromRun();
     }
     state.inBossCombat = false;
     showShipUpgradeOverlay();
-    return;
-  }
-
-  if (state.runWon) {
-    showOverlay(
-      "Run Complete",
-      "You cleared easy, medium, and hard.",
-      "Restart Run",
-      () => startRun()
-    );
     return;
   }
 
@@ -4981,8 +7651,106 @@ function handleCombatEnd() {
     return;
   }
 
+  if (
+    currentNode &&
+    currentNode.type === "elite" &&
+    state.run &&
+    !state.run.commitMomentUsed
+  ) {
+    showCommitMomentOverlay();
+    return;
+  }
+
   showPostVictoryChoiceOverlay();
 }
+
+function cardPlayCost(card) {
+  const n = Number(card?.cost);
+  if (Number.isFinite(n)) return n;
+  const base = card?.id != null ? getCardById(card.id) : null;
+  const n2 = Number(base?.cost);
+  return Number.isFinite(n2) ? n2 : 0;
+}
+
+function playerEnergyPlayable() {
+  const n = Number(state.player?.energy);
+  return Number.isFinite(n) ? n : 0;
+}
+
+let draggingTargetedCardUid = null;
+let draggingPlayerCardUid = null;
+let draggingTargetHoverEnemyUid = null;
+let dragOriginPoint = null;
+let dragPointerPoint = null;
+let targetingBeamEl = null;
+
+function ensureTargetingBeamEl() {
+  if (targetingBeamEl && document.body.contains(targetingBeamEl)) return targetingBeamEl;
+  targetingBeamEl = document.getElementById("targetingBeam");
+  if (!targetingBeamEl) {
+    targetingBeamEl = document.createElement("div");
+    targetingBeamEl.id = "targetingBeam";
+    document.body.appendChild(targetingBeamEl);
+  }
+  return targetingBeamEl;
+}
+
+function updateTargetingBeam() {
+  if (!draggingTargetedCardUid || !dragOriginPoint) return;
+  const beam = ensureTargetingBeamEl();
+  const targetPoint = (() => {
+    if (draggingTargetHoverEnemyUid) {
+      const el = document.querySelector(`.enemy-unit[data-enemy-uid="${draggingTargetHoverEnemyUid}"]`);
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      }
+    }
+    return dragPointerPoint;
+  })();
+  if (!targetPoint) return;
+  const dx = targetPoint.x - dragOriginPoint.x;
+  const dy = targetPoint.y - dragOriginPoint.y;
+  const length = Math.max(0, Math.sqrt(dx * dx + dy * dy));
+  const angle = Math.atan2(dy, dx);
+  beam.style.left = `${dragOriginPoint.x}px`;
+  beam.style.top = `${dragOriginPoint.y}px`;
+  beam.style.width = `${length}px`;
+  beam.style.transform = `rotate(${angle}rad)`;
+  beam.classList.toggle("locked", Boolean(draggingTargetHoverEnemyUid));
+}
+
+function clearDragTargetingState() {
+  draggingTargetedCardUid = null;
+  draggingPlayerCardUid = null;
+  draggingTargetHoverEnemyUid = null;
+  dragOriginPoint = null;
+  dragPointerPoint = null;
+  document.body.classList.remove("drag-targeting-active");
+  document.body.classList.remove("drag-player-targeting-active");
+  document.querySelectorAll(".enemy-unit.drop-over, .enemy-unit.target-lock").forEach(el => {
+    el.classList.remove("drop-over");
+    el.classList.remove("target-lock");
+  });
+  const playerGroup = document.getElementById("playerGroup");
+  if (playerGroup) {
+    playerGroup.classList.remove("drop-over");
+    playerGroup.classList.remove("target-lock");
+  }
+  const beam = document.getElementById("targetingBeam");
+  if (beam) beam.classList.remove("locked");
+}
+
+document.addEventListener("dragover", event => {
+  if (!draggingTargetedCardUid) return;
+  dragPointerPoint = { x: event.clientX, y: event.clientY };
+  updateTargetingBeam();
+});
+
+document.addEventListener("drop", () => {
+  if (!draggingTargetedCardUid && !draggingPlayerCardUid) return;
+  clearDragTargetingState();
+});
 
 function renderHand() {
   els.hand.innerHTML = "";
@@ -4996,34 +7764,96 @@ function renderHand() {
         <div class="cost">—</div>
       </div>
       <div class="card-type">Status</div>
-      <div class="card-text">End turn or redraw to continue.</div>
+      <div class="card-text">End turn, or draw cards when your deck refills.</div>
       <button disabled>Waiting</button>
     `;
     els.hand.appendChild(empty);
     return;
   }
 
-  state.hand.forEach(card => {
-    const canPlay = !state.combatEnded && card.cost <= state.player.energy;
+  const handSize = Math.max(1, state.hand.length);
+  const center = (handSize - 1) / 2;
+  const spread = Math.max(1, center);
+
+  state.hand.forEach((card, index) => {
+    const cost = cardPlayCost(card);
+    const energy = playerEnergyPlayable();
+    const canPlay = !state.combatEnded && cost <= energy;
+    const requiresTarget = cardRequiresEnemyTarget(card);
+    const supportsPlayerDrop = cardSupportsPlayerDropTarget(card);
 
     const cardEl = document.createElement("div");
     const role = card.cardRole || "system";
-    cardEl.className = `card ${card.type} role-${role} ${canPlay ? "" : "disabled"}`.trim();
+    cardEl.dataset.cardUid = card.uid;
+    cardEl.className =
+      `card ${card.type} role-${role} ${canPlay ? "card--playable" : "disabled"} ${requiresTarget ? "card--targeted" : ""} ${supportsPlayerDrop ? "card--player-targeted" : ""}`.trim();
+
+    const normalized = (index - center) / spread;
+    const edge = Math.abs(normalized);
+    const rotate = normalized * 8;
+    const yOffset = Math.round(edge * edge * 14);
+    const xOffset = Math.round(normalized * 8);
+    const overlap = handSize <= 4 ? -8 : handSize <= 6 ? -12 : -16;
+    const zBase = 20 - Math.round(edge * 10);
+    cardEl.style.setProperty("--fan-rotate", `${rotate}deg`);
+    cardEl.style.setProperty("--fan-y", `${yOffset}px`);
+    cardEl.style.setProperty("--fan-x", `${xOffset}px`);
+    cardEl.style.setProperty("--fan-overlap", `${index === 0 ? 0 : overlap}px`);
+    cardEl.style.setProperty("--fan-z", `${zBase + index}`);
+    cardEl.style.setProperty("--fan-rotate-mobile", `${rotate * 0.65}deg`);
+    cardEl.style.setProperty("--fan-y-mobile", `${Math.round(yOffset * 0.65)}px`);
+    cardEl.style.setProperty("--fan-x-mobile", `${Math.round(xOffset * 0.6)}px`);
+    cardEl.style.setProperty("--fan-overlap-mobile", `${index === 0 ? 0 : Math.round(overlap * 0.6)}px`);
+
+    cardEl.draggable = Boolean((requiresTarget || supportsPlayerDrop) && canPlay);
+    if ((requiresTarget || supportsPlayerDrop) && canPlay) {
+      cardEl.addEventListener("dragstart", event => {
+        draggingTargetedCardUid = requiresTarget ? card.uid : null;
+        draggingPlayerCardUid = supportsPlayerDrop ? card.uid : null;
+        draggingTargetHoverEnemyUid = null;
+        const rect = cardEl.getBoundingClientRect();
+        dragOriginPoint = { x: rect.left + rect.width / 2, y: rect.top + 18 };
+        dragPointerPoint = { x: event.clientX || dragOriginPoint.x, y: event.clientY || dragOriginPoint.y };
+        cardEl.classList.add("card--dragging");
+        if (requiresTarget) {
+          document.body.classList.add("drag-targeting-active");
+          ensureTargetingBeamEl();
+          updateTargetingBeam();
+        }
+        if (supportsPlayerDrop) {
+          document.body.classList.add("drag-player-targeting-active");
+        }
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", card.uid);
+        }
+      });
+      cardEl.addEventListener("dragend", () => {
+        cardEl.classList.remove("card--dragging");
+        clearDragTargetingState();
+      });
+    }
 
     const typeLabel = getCardCategoryLabel(card);
 
     cardEl.innerHTML = `
       <div class="card-top">
         <div class="card-title">${card.name}</div>
-        <div class="cost">${card.cost}</div>
+        <div class="cost">${cost}</div>
       </div>
       <div class="card-type">${typeLabel}</div>
       <div class="card-text">${enhanceCardDescriptionWithTooltips(card.description)}</div>
-      <button ${canPlay ? "" : "disabled"}>${canPlay ? "Play Card" : "Not Enough Energy"}</button>
+      <button ${canPlay ? "" : "disabled"}>${canPlay ? (requiresTarget ? "Drag to Target" : supportsPlayerDrop ? "Drag to Ship" : "Play Card") : "Not Enough Energy"}</button>
     `;
 
     const button = cardEl.querySelector("button");
-    button.addEventListener("click", () => playCard(card.uid));
+    button.addEventListener("click", () => {
+      if (requiresTarget) {
+        log("Drag this card onto an enemy to target it.", "system");
+        return;
+      }
+      playCard(card.uid);
+    });
 
     els.hand.appendChild(cardEl);
   });
@@ -5082,6 +7912,8 @@ function render() {
   if (els.mapScreen) {
     els.mapScreen.classList.toggle("hidden", state.currentScreen !== "map");
   }
+  document.body.classList.toggle("combat-active", state.currentScreen === "combat");
+  if (els.combatScreen) els.combatScreen.classList.toggle("hidden", state.currentScreen !== "combat");
   const showCombatShell = state.currentScreen === "combat";
   if (els.combatHeaderSection) els.combatHeaderSection.classList.toggle("hidden", !showCombatShell);
   if (els.playerHudSection) els.playerHudSection.classList.toggle("hidden", !showCombatShell);
@@ -5109,7 +7941,7 @@ function render() {
   els.shipNameText.textContent = getShipDisplayName(state.selectedShipId);
   els.shipPassiveText.textContent = SHIP_PASSIVE_TEXT;
   els.creditsText.textContent = state.runCredits;
-  if (els.fuelText) els.fuelText.textContent = state.player.fuel;
+  if (els.fuelText) els.fuelText.textContent = state.run.fuel;
 
   els.drawCount.textContent = state.drawPile.length;
   els.discardCount.textContent = state.discardPile.length;
@@ -5126,7 +7958,6 @@ function render() {
   renderEnemies();
 
   els.endTurnBtn.disabled = state.combatEnded;
-  els.redrawBtn.disabled = state.combatEnded;
 
   renderHand();
 }
@@ -5136,7 +7967,7 @@ function initStartMusic() {
   if (!music) return;
 
   const startAudio = () => {
-    music.volume = 0.5;
+    music.volume = 0.025;
     music.play().catch(() => {});
 
     document.removeEventListener("click", startAudio);
@@ -5169,7 +8000,6 @@ function initMuteButton() {
 }
 
 els.restartBtn.addEventListener("click", startRun);
-els.redrawBtn.addEventListener("click", redrawHand);
 els.endTurnBtn.addEventListener("click", endTurn);
 if (els.startRunFlowBtn) {
   els.startRunFlowBtn.addEventListener("click", () => {
@@ -5180,4 +8010,5 @@ if (els.startRunFlowBtn) {
 initStartMusic();
 initMuteButton();
 initTooltipSystem();
+initMiningMinigame();
 showStartScreen();

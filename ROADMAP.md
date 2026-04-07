@@ -1,6 +1,12 @@
 # Space Roguelike Card Game – Roadmap
 
-## Phase 0 – Foundation (CURRENT)
+**Prototype snapshot:** The HTML/JS build already includes a full run shell—start screen, ship select, sector maps with travel/fuel, shops and docks, elite/planet/distress nodes, gate-locked boss contracts, card rewards, and combat tooltips/audio hooks. Phases below note **done (prototype)** vs **in progress** vs **not yet** relative to that build.
+
+---
+
+## Phase 0 – Foundation
+
+**Status:** Done (prototype).
 
 Goal: Prove the core combat loop is fun.
 
@@ -18,6 +24,8 @@ Player can complete a single fight and feel tension + decision making.
 
 ## Phase 1 – Encounter Flow
 
+**Status:** Done (prototype).
+
 Goal: Make fights feel like part of a run.
 
 Tasks:
@@ -30,9 +38,13 @@ Tasks:
 Success Condition:
 Player can complete multiple encounters in sequence.
 
+_Note: Reward picks are weighted (often 2–3 choices early run); flow uses overlays and map return._
+
 ---
 
 ## Phase 2 – Run Progression
+
+**Status:** Done (prototype).
 
 Goal: Introduce identity and scaling.
 
@@ -46,9 +58,13 @@ Tasks:
 Success Condition:
 Player feels stronger in later encounters.
 
+_Note: Reactor / Weapons / Shields bonuses exist in combat UI; shops and rewards feed the triangle._
+
 ---
 
 ## Phase 3 – Encounter Variety
+
+**Status:** In progress (breadth in; depth TBD).
 
 Goal: Reduce repetition.
 
@@ -61,9 +77,13 @@ Tasks:
 Success Condition:
 Runs feel dynamic.
 
+_Note: Elite nodes, planet/dock/distress routes, ambush/contract variants, and keyword/status combat exist; extraction and events are still rough._
+
 ---
 
 ## Phase 4 – Boss Fight
+
+**Status:** Done (prototype) for a sector boss beat; **in progress** for spectacle depth.
 
 Goal: Create climax.
 
@@ -75,9 +95,13 @@ Tasks:
 Success Condition:
 Run has emotional payoff.
 
+_Note: Gate unlock → boss contract → per-sector boss with rewards is in; multi-phase design and stronger bespoke mechanics are future depth._
+
 ---
 
 ## Phase 5 – Run Structure
+
+**Status:** Done (prototype).
 
 Goal: Full roguelike feel.
 
@@ -90,9 +114,13 @@ Tasks:
 Success Condition:
 Complete playable run exists.
 
+_Note: Multi-sector progression, fuel travel, ship select, and run restart through the existing flow._
+
 ---
 
 ## Phase 6 – Polish & Identity
+
+**Status:** In progress.
 
 Goal: Make game feel real.
 
@@ -104,3 +132,5 @@ Tasks:
 
 Success Condition:
 Game is presentable to players.
+
+_Note: Tooltips, map tips, combo banner, mute, and start music are in; art pass and fuller audio/design cohesion remain._
