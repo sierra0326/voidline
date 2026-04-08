@@ -300,6 +300,93 @@ function createBranchMergeCampaignSector(sectorNum) {
   return nodes;
 }
 
+function createSingleRunCampaignMap() {
+  const totalRows = 30;
+  const Y = r => 578 - r * 16.5;
+  const L = 310;
+  const C = 560;
+  const R = 810;
+  const nodes = [];
+
+  nodes.push({ id: "S", type: "start", row: 0, neighbors: [], x: C, y: Y(0) });
+
+  const typeCycle = ["combat", "planet", "combat", "dock", "combat", "shop", "combat"];
+  const branchRows = new Set([3, 6, 9, 12, 15, 18, 21, 24, 27]);
+  const eliteRows = new Set([10, 20]);
+
+  let prevIds = ["S"];
+  for (let row = 1; row <= totalRows; row += 1) {
+    const rowIds = [];
+
+    if (row === totalRows) {
+      nodes.push({ id: "BG", type: "gate", row, neighbors: [], x: C, y: Y(row) });
+      rowIds.push("BG");
+    } else if (eliteRows.has(row)) {
+      const id = `n${row}`;
+      nodes.push({ id, type: "elite", danger: "elite", row, neighbors: [], x: C, y: Y(row) });
+      rowIds.push(id);
+    } else if (branchRows.has(row)) {
+      const laneTypes = [
+        typeCycle[row % typeCycle.length],
+        "combat",
+        typeCycle[(row + 2) % typeCycle.length]
+      ];
+      const xs = [L, C, R];
+      const suffixes = ["a", "b", "c"];
+      for (let i = 0; i < 3; i += 1) {
+        const type = laneTypes[i];
+        const id = `b${row}${suffixes[i]}`;
+        const node = { id, type, row, neighbors: [], x: xs[i], y: Y(row) };
+        if (type === "combat") {
+          node.danger = row <= 8 ? "easy" : row <= 18 ? "medium" : "hard";
+        }
+        nodes.push(node);
+        rowIds.push(id);
+      }
+    } else {
+      const id = `n${row}`;
+      const type = row <= 8 ? "combat" : row <= 18 ? "combat" : row <= 26 ? "combat" : "combat";
+      const node = { id, type, row, neighbors: [], x: C, y: Y(row) };
+      node.danger = row <= 8 ? "easy" : row <= 18 ? "medium" : "hard";
+      nodes.push(node);
+      rowIds.push(id);
+    }
+
+    prevIds.forEach(fromId => {
+      const fromNode = nodes.find(n => n.id === fromId);
+      if (!fromNode) return;
+      fromNode.neighbors.push(...rowIds);
+    });
+    prevIds = rowIds;
+  }
+
+  const checkpointN10 = nodes.find(n => n.id === "n10");
+  if (checkpointN10) {
+    checkpointN10.type = "elite";
+    checkpointN10.danger = "elite";
+  }
+  const checkpointN20 = nodes.find(n => n.id === "n20");
+  if (checkpointN20) {
+    checkpointN20.type = "elite";
+    checkpointN20.danger = "elite";
+  }
+  console.log(
+    "[elite checkpoint verify]",
+    ["n10", "n20"].map(id => {
+      const node = nodes.find(n => n.id === id);
+      return { id, type: node?.type || "missing" };
+    })
+  );
+  console.log(
+    "[elite checkpoints]",
+    nodes
+      .filter(n => n.type === "elite")
+      .map(n => n.id)
+  );
+
+  return nodes;
+}
+
 function collectAllPathsStartToBoss(nodes, startId, bossId) {
   const byId = new Map(nodes.map(n => [n.id, n]));
   const paths = [];
@@ -828,27 +915,7 @@ function finalizeCampaignLaneMap(nodes) {
 }
 
 function createSectorByNumber(sectorNumber) {
-  const nodes = finalizeCampaignLaneMap(createBranchMergeCampaignSector(sectorNumber));
-  if (sectorNumber === 1) {
-    const midLeftPreElite = nodes.find(n => n.id === "s1-b5a");
-    if (midLeftPreElite) {
-      midLeftPreElite.type = "shop";
-      delete midLeftPreElite.danger;
-    }
-
-    const tooEarlyShop = nodes.find(n => n.id === "s1-b2b");
-    if (tooEarlyShop) {
-      tooEarlyShop.type = "combat";
-      tooEarlyShop.danger = "easy";
-    }
-
-    const lateLeftBranch = nodes.find(n => n.id === "s1-b8a");
-    if (lateLeftBranch) {
-      lateLeftBranch.type = "planet";
-      delete lateLeftBranch.danger;
-    }
-  }
-  return nodes;
+  return finalizeCampaignLaneMap(createSingleRunCampaignMap());
 }
 
 function getNodeById(nodeId) {
@@ -880,11 +947,11 @@ function isNodeVisited(nodeId) {
 }
 
 function isSandboxMapMode() {
-  return state.endlessMode || state.sectorNumber > 3;
+  return state.endlessMode;
 }
 
 function isCampaignLaneMovement() {
-  return state.sectorNumber <= 3 && !isSandboxMapMode();
+  return !isSandboxMapMode();
 }
 
 function passesGuidedForwardRules(targetNodeId) {
@@ -953,7 +1020,7 @@ function syncPlayerFuelFromRun() {
 
 function applyFuelCapForRunState() {
   if (!state.player || !state.run) return;
-  const campaign = state.sectorNumber <= 3 && !state.endlessMode;
+  const campaign = !state.endlessMode;
   state.player.maxFuel = campaign ? CAMPAIGN_MAX_FUEL : SANDBOX_MAX_FUEL;
   state.run.fuel = Math.min(state.run.fuel, state.player.maxFuel);
   syncPlayerFuelFromRun();
@@ -1004,7 +1071,7 @@ function getMapNodeTooltip(node, currentNode) {
 
   let text = "Unknown node.";
   if (node.type === "start") {
-    text = "Hangar. Starting point for this sector.";
+    text = "Hangar. Starting point for this campaign climb.";
   } else if (node.type === "combat") {
     const danger = (node.danger || "medium").toLowerCase();
     const threat = danger.charAt(0).toUpperCase() + danger.slice(1);
@@ -1038,7 +1105,7 @@ function getMapNodeTooltip(node, currentNode) {
         : "";
     text = `Elite contract.${themeStr}${namesHint}.`;
   } else if (node.type === "gate") {
-    text = "Boss Contract. Major boss encounter with powerful rewards.";
+    text = "Boss Contract. Final encounter of the campaign climb.";
   } else if (node.type === "distress") {
     text = "Distress Signal. Unpredictable encounter with risk and reward.";
   } else if (node.type === "black-market") {
@@ -1070,15 +1137,15 @@ function getSectorProgressText() {
   const visited = state.visitedNodeIds.length;
   const cleared = state.clearedNodeIds.length;
   const ec = state.encounterIndex || 0;
-  return `Combats won ${ec} / ${RUN_LENGTH} • Sector step ${state.sectorNumber}/3 • Nodes ${visited}/${total} • Cleared ${cleared}`;
+  return `Combats won ${ec} / ${RUN_LENGTH} • Campaign climb • Nodes ${visited}/${total} • Cleared ${cleared}`;
 }
 
 function getNodeSymbol(node) {
   if (!node) return "?";
   if (node.type === "start") return "⌂";
-  if (node.type === "combat") return "●";
-  if (node.type === "dock") return "⬢";
-  if (node.type === "planet") return "◉";
+  if (node.type === "combat") return "⌖";
+  if (node.type === "dock") return "⛭";
+  if (node.type === "planet") return "◎";
   if (node.type === "shop") return "$";
   if (node.type === "black-market") return "✦";
   if (node.type === "distress") return "!";
@@ -1105,7 +1172,7 @@ function getRouteIdentityForMapNode(node) {
   if (!node || !state.mapNodes || state.mapNodes.length === 0) {
     return { routeType: "middle", preferredTags: ["balanced", "defense", "sustain"] };
   }
-  if (state.sectorNumber <= 3 && typeof node.x === "number") {
+  if (typeof node.x === "number") {
     if (node.x < 395) {
       return { routeType: "left", preferredTags: ["economy", "sustain", "swarm"] };
     }
@@ -1151,18 +1218,27 @@ function getGateBossSubtitle() {
 function renderStarMapSvg() {
   const currentNode = getCurrentNode();
   if (!currentNode) return "";
+  console.log(
+    "[elite render verify]",
+    ["n10", "n20"].map(id => {
+      const node = state.mapNodes.find(n => n.id === id);
+      return { id, type: node?.type || "missing" };
+    })
+  );
 
   const mapHasRowLayering = state.mapNodes.some(n => typeof n.row === "number");
   const currentRow = typeof currentNode.row === "number" ? currentNode.row : null;
-  const visibleRows = [];
-  if (currentRow !== null) {
-    for (let r = currentRow; r <= currentRow + 4; r++) visibleRows.push(r);
-  }
-  console.log("[visible rows]", visibleRows);
+  const rowWindowBehind = 2;
+  const rowWindowAhead = 8;
+  const maxRow = mapHasRowLayering
+    ? Math.max(...state.mapNodes.map(n => (typeof n.row === "number" ? n.row : 0)))
+    : null;
+  const stepY = 74;
+  const topPad = 64;
 
   function rowInLookaheadBand(row) {
     if (currentRow === null || typeof row !== "number") return false;
-    return row >= currentRow && row <= currentRow + 4;
+    return row >= currentRow && row <= currentRow + rowWindowAhead;
   }
 
   function edgeInLookaheadBand(a, b) {
@@ -1172,7 +1248,16 @@ function renderStarMapSvg() {
     if (ra === null || rb === null) return false;
     const lo = Math.min(ra, rb);
     const hi = Math.max(ra, rb);
-    return hi <= currentRow + 4 && lo >= currentRow - 1;
+    return hi <= currentRow + rowWindowAhead && lo >= currentRow - rowWindowBehind;
+  }
+
+  function getRenderPoint(node) {
+    if (!mapHasRowLayering || typeof node.row !== "number" || maxRow === null) {
+      return { x: node.x, y: node.y };
+    }
+    const y = topPad + (maxRow - node.row) * stepY;
+    const x = 560 + (node.x - 560) * 1.14;
+    return { x, y };
   }
 
   const drawnEdges = new Set();
@@ -1180,14 +1265,14 @@ function renderStarMapSvg() {
   const nodeParts = [];
 
   for (const node of state.mapNodes) {
-    for (const neighborId of node.neighbors) {
+    let renderedFromNodeCount = 0;
+    for (const neighborId of node.neighbors || []) {
+      if (renderedFromNodeCount >= 3) break;
       const key = [node.id, neighborId].sort().join("-");
       if (drawnEdges.has(key)) continue;
-      drawnEdges.add(key);
 
       const neighbor = getNodeById(neighborId);
       if (!neighbor) continue;
-
       const isAdjacentEdge =
         (node.id === state.currentNodeId && canTravelToNode(neighborId)) ||
         (neighborId === state.currentNodeId && canTravelToNode(node.id));
@@ -1196,47 +1281,55 @@ function renderStarMapSvg() {
         edgeClass = "map-edge map-edge-lookahead";
       }
 
+      drawnEdges.add(key);
+      renderedFromNodeCount += 1;
+      const a = getRenderPoint(node);
+      const b = getRenderPoint(neighbor);
+
       lineParts.push(`
         <line
           class="${edgeClass}"
-          x1="${node.x}"
-          y1="${node.y}"
-          x2="${neighbor.x}"
-          y2="${neighbor.y}"
+          x1="${a.x}"
+          y1="${a.y}"
+          x2="${b.x}"
+          y2="${b.y}"
         />
       `);
     }
   }
 
   for (const node of state.mapNodes) {
+    const rp = getRenderPoint(node);
     const isCurrent = node.id === state.currentNodeId;
     const isVisited = isNodeVisited(node.id);
     const isCleared = isNodeCleared(node.id);
     const isAdjacent = currentNode.neighbors.includes(node.id) && canTravelToNode(node.id);
+    const isEliteCheckpoint = node.id === "n10" || node.id === "n20";
 
     let fill = "#1c2c4a";
     if (node.type === "start") fill = "#ffd166";
-    if (node.type === "dock") fill = "#1f6b62";
-    if (node.type === "planet") fill = "#5b4b8a";
-    if (node.type === "elite") fill = "#8a2f2f";
-    if (node.type === "gate") fill = "#c08b2f";
+    if (node.type === "dock") fill = "#1d7b84";
+    if (node.type === "planet") fill = "#6b49a3";
+    if (node.type === "elite") fill = "#b63c4a";
+    if (node.type === "gate") fill = "#f1bb44";
+    if (node.type === "shop") fill = "#d8a83f";
     if (node.type === "combat") {
-      if (node.danger === "easy") fill = "#3f6ea8";
-      else if (node.danger === "medium") fill = "#2f4d7a";
-      else if (node.danger === "hard") fill = "#24385c";
-      else fill = "#2f4d7a";
+      if (node.danger === "easy") fill = "#4c7fc0";
+      else if (node.danger === "medium") fill = "#3f6da8";
+      else if (node.danger === "hard") fill = "#335a8b";
+      else fill = "#3f6da8";
     }
 
     let stroke = "rgba(255,255,255,0.16)";
     let strokeWidth = 2;
     let opacity = 1;
     let cursor = "default";
-    let radius = 23;
+    let radius = 28;
     const isInteractive = isCurrent || isAdjacent;
     const classParts = ["star-node"];
-    if (node.type === "start") radius = 29;
-    if (node.type === "elite") radius = 27;
-    if (node.type === "gate") radius = 31;
+    if (node.type === "start") radius = 31;
+    if (node.type === "elite") radius = 31;
+    if (node.type === "gate") radius = 34;
 
     let drawRadius = radius;
     if (isAdjacent && !isCurrent) drawRadius = radius + 4;
@@ -1244,15 +1337,20 @@ function renderStarMapSvg() {
     if (isInteractive) {
       opacity = isCleared ? 0.9 : 1;
     } else if (mapHasRowLayering && typeof node.row === "number" && currentRow !== null) {
-      if (node.row < currentRow) {
-        opacity = 0.38;
+      if (node.row < currentRow - rowWindowBehind) {
+        opacity = 0.28;
+      } else if (node.row < currentRow) {
+        opacity = 0.42;
       } else if (rowInLookaheadBand(node.row)) {
-        opacity = 0.82;
+        opacity = 0.88;
       } else {
-        opacity = 0.48;
+        opacity = 0.38;
       }
     } else {
       opacity = 0.48;
+    }
+    if (node.type === "elite") {
+      opacity = Math.max(opacity, 0.96);
     }
 
     if (isVisited) stroke = "rgba(121,188,255,0.65)";
@@ -1282,70 +1380,41 @@ function renderStarMapSvg() {
     if (node.type === "shop") classParts.push("is-shop");
     if (node.type === "dock") classParts.push("is-dock");
 
-    const labelY = node.y + drawRadius + 12;
-    let labelsInner = "";
-    if (node.type === "gate") {
-      const bName = getSectorBossName(state.sectorNumber);
-      const sub = getGateBossSubtitle();
-      const gatePlan =
-        mapHasRowLayering &&
-        typeof node.row === "number" &&
-        currentRow !== null &&
-        node.row >= currentRow &&
-        !isCurrent;
-      const bossFill = gatePlan ? "rgba(255, 230, 190, 0.98)" : "rgba(255, 224, 170, 0.96)";
-      const subFill = gatePlan ? "rgba(210, 225, 248, 0.94)" : "rgba(200, 215, 240, 0.88)";
-      labelsInner = `
-        <text class="star-node-map-label star-node-map-label--boss" x="${node.x}" y="${labelY}" text-anchor="middle" font-size="10" font-weight="700" fill="${bossFill}">BOSS: ${bName}</text>
-        <text class="star-node-map-label" x="${node.x}" y="${labelY + 12}" text-anchor="middle" font-size="9" fill="${subFill}">${sub}</text>
-      `;
-    } else {
-      const kind = getMapNodeKindLabel(node);
-      const tagLine = getMapNodeTagHintLine(node);
-      const isFuturePlan =
-        mapHasRowLayering &&
-        typeof node.row === "number" &&
-        currentRow !== null &&
-        node.row >= currentRow &&
-        !isCurrent;
-      const kindFill = isFuturePlan ? "rgba(228, 236, 255, 0.97)" : "rgba(215, 228, 252, 0.92)";
-      const tagFill = isFuturePlan ? "rgba(185, 210, 245, 0.92)" : "rgba(165, 195, 235, 0.78)";
-      labelsInner = `<text class="star-node-map-label" x="${node.x}" y="${labelY}" text-anchor="middle" font-size="10" fill="${kindFill}">${kind}</text>`;
-      if (tagLine) {
-        labelsInner += `<text class="star-node-map-label star-node-map-label--tags" x="${node.x}" y="${labelY + 11}" text-anchor="middle" font-size="8.5" fill="${tagFill}">${tagLine}</text>`;
-      }
-    }
+    const labelsInner = "";
 
     const tooltipText = getMapNodeTooltip(node, currentNode);
     nodeParts.push(`
-      <g class="${classParts.join(" ")}" data-node-id="${node.id}" data-node-type="${node.type}" data-tooltip="${tooltipText}" data-interactive="${isInteractive ? "true" : "false"}" style="cursor:${cursor}; opacity:${opacity}">
+      <g class="${classParts.join(" ")}" data-node-id="${node.id}" data-node-type="${node.type}" data-elite-checkpoint="${isEliteCheckpoint ? "true" : "false"}" data-tooltip="${tooltipText}" data-interactive="${isInteractive ? "true" : "false"}" style="cursor:${cursor}; opacity:${opacity}">
         ${
           node.type === "gate"
-            ? `<circle class="boss-node-glow" cx="${node.x}" cy="${node.y}" r="${drawRadius + 10}" fill="none" stroke="${
+            ? `<circle class="boss-node-glow" cx="${rp.x}" cy="${rp.y}" r="${drawRadius + 10}" fill="none" stroke="${
                 getBossRingStrokeColor()
               }" stroke-width="2.4" />`
             : ""
         }
         ${
           node.type === "start"
-            ? `<circle cx="${node.x}" cy="${node.y}" r="${drawRadius + 6}" fill="none" stroke="rgba(255, 225, 155, 0.5)" stroke-width="2.2" />`
+            ? `<circle cx="${rp.x}" cy="${rp.y}" r="${drawRadius + 6}" fill="none" stroke="rgba(255, 225, 155, 0.5)" stroke-width="2.2" />`
             : ""
         }
         ${
           node.type === "elite"
-            ? `<circle cx="${node.x}" cy="${node.y}" r="${drawRadius + 5}" fill="none" stroke="rgba(255, 105, 105, 0.5)" stroke-width="2" />`
+            ? `<circle cx="${rp.x}" cy="${rp.y}" r="${drawRadius + 6}" fill="none" stroke="rgba(255, 88, 88, 0.82)" stroke-width="3.4" />
+               <circle cx="${rp.x}" cy="${rp.y}" r="${drawRadius + 10}" fill="none" stroke="rgba(255, 110, 110, 0.32)" stroke-width="2.2" />`
             : ""
         }
         <circle
           class="star-node-core"
-          cx="${node.x}"
-          cy="${node.y}"
+          cx="${rp.x}"
+          cy="${rp.y}"
           r="${drawRadius}"
           fill="${fill}"
           stroke="${stroke}"
           stroke-width="${strokeWidth}"
         />
-        <text class="star-node-symbol" x="${node.x}" y="${node.y + 6}" text-anchor="middle" font-size="18" font-weight="800" fill="#e6f0ff">
+        <text class="star-node-symbol" x="${rp.x}" y="${rp.y + 7}" text-anchor="middle" font-size="${
+          node.type === "elite" ? 22 : node.type === "gate" ? 21 : 20
+        }" font-weight="800" fill="#e6f0ff">
           ${getNodeSymbol(node)}
         </text>
         ${labelsInner}
@@ -1355,7 +1424,7 @@ function renderStarMapSvg() {
 
   return `
     <div class="star-map-shell">
-      <svg class="star-map-svg" viewBox="0 0 1120 600" preserveAspectRatio="xMidYMid meet" width="100%" role="img" aria-label="Sector star map">
+      <svg class="star-map-svg" viewBox="0 0 1120 ${topPad * 2 + ((maxRow ?? 0) + 1) * stepY}" preserveAspectRatio="xMidYMin meet" width="100%" role="img" aria-label="Campaign map" data-current-row="${currentRow ?? 0}" data-max-row="${maxRow ?? 0}">
         ${lineParts.join("")}
         ${nodeParts.join("")}
       </svg>
@@ -1372,12 +1441,18 @@ const TIER_MULTIPLIER = {
 
 function getAllowedTiersForEncounter(encounterIndex) {
   const i = encounterIndex;
-  if (i <= 1) return ["easy"];
-  if (i <= 4) return ["easy", "medium"];
-  if (i <= 9) return ["medium"];
-  if (i <= 14) return ["medium", "hard"];
-  if (i <= 22) return ["hard"];
+  if (i <= 3) return ["easy"];
+  if (i <= 8) return ["easy", "medium"];
+  if (i <= 15) return ["medium"];
+  if (i <= 22) return ["medium", "hard"];
+  if (i <= 28) return ["hard"];
   return ["hard", "medium"];
+}
+
+function getRunProgressStage(encounterIndex = state.encounterIndex || 0) {
+  if (encounterIndex <= 9) return 1;
+  if (encounterIndex <= 19) return 2;
+  return 3;
 }
 
 function pickRandom(array) {
@@ -1954,6 +2029,63 @@ const SYSTEM_CARDS = [
 
       log(`Recalibrate converts ${beam} Beam into Mark.`, "system");
       showComboBanner("⚡→🎯 RELOCK");
+    }
+  },
+  {
+    id: "beam-burst",
+    name: "Beam Burst",
+    type: "system",
+    cost: 1,
+    description: "Deal 3 damage. +1 per Beam.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      const beam = enemy.beamCharge || 0;
+      dealAttackDamageToEnemy(3 + beam, "Beam Burst");
+    }
+  },
+  {
+    id: "beam-siphon",
+    name: "Beam Siphon",
+    type: "system",
+    cost: 1,
+    description: "Gain 1 energy. Charge +1 Beam.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      state.player.energy += 1;
+      enemy.beamCharge = (enemy.beamCharge || 0) + 1;
+      log("Beam Siphon grants 1 energy and adds 1 Beam.", "system");
+    }
+  },
+  {
+    id: "prism-lance",
+    name: "Prism Lance",
+    type: "system",
+    cost: 2,
+    description: "Deal 4 damage. +3 per Beam. Consume half Beam.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      const beam = enemy.beamCharge || 0;
+      const consume = Math.floor(beam / 2);
+      enemy.beamCharge = Math.max(0, beam - consume);
+      dealAttackDamageToEnemy(4 + beam * 3, "Prism Lance");
+      if (consume > 0) log(`Prism Lance consumes ${consume} Beam.`, "system");
+    }
+  },
+  {
+    id: "steady-charge",
+    name: "Steady Charge",
+    type: "system",
+    cost: 1,
+    description: "Charge +2 Beam. Draw 1 card.",
+    effect() {
+      const enemy = getSelectedEnemy();
+      if (!enemy) return;
+      enemy.beamCharge = (enemy.beamCharge || 0) + 2;
+      drawCards(1);
+      log("Steady Charge builds 2 Beam and draws 1.", "system");
     }
   },
   {
@@ -2815,6 +2947,10 @@ const CARD_TAGS_BY_ID = {
   "charge-beam": ["beam"],
   "laser-pulse": ["beam"],
   "full-beam": ["beam", "ultra"],
+  "beam-burst": ["beam"],
+  "beam-siphon": ["beam"],
+  "prism-lance": ["beam"],
+  "steady-charge": ["beam"],
   overfocus: ["beam"],
   "target-lock": ["beam"],
   recalibrate: ["beam"],
@@ -2953,6 +3089,8 @@ function getCommittedArchetype() {
 const TRACKED_ARCHETYPE_TAGS = ["beam", "burn", "snub", "block", "mark", "economy", "drone", "overheat"];
 const WEAK_ARCHETYPE_TAGS = ["burn", "economy", "snub", "overheat", "drone"];
 const OFF_ARCHETYPE_POOL_CHANCE = 0.36;
+const ARCHETYPE_SEED_RATE_EARLY = 0.36;
+const ARCHETYPE_SEED_RATE_ELITE = 0.54;
 
 function getRewardPool() {
   const archetype = getShipArchetype(state.selectedShipId);
@@ -3008,25 +3146,30 @@ function getCardRewardWeight(card) {
   const earlyDirectionWindow = encounter <= 3;
   const shipArchetype = getShipArchetype(state.selectedShipId);
   let weight = 1;
+  const isArchetypeCard = tags.includes(shipArchetype);
+  const isEliteReward = Boolean(state.eliteContractCombat);
+  const recentOffers = state.run?.recentRewardOfferIds || [];
+  const seenInLastOne = recentOffers[recentOffers.length - 1] === card.id;
+  const seenInLastTwo = recentOffers.slice(-2).includes(card.id);
 
   weight *= getArchetypeRepresentationMultiplier(card);
 
   if (committed && tags.includes(committed)) {
-    weight *= 1.58;
+    weight *= 1.28;
   }
   if (committed && tags.includes("commit") && tags.includes(committed)) {
     weight *= 1.38;
   }
-  if (tags.includes(shipArchetype)) {
-    weight *= 1.1;
+  if (isArchetypeCard) {
+    weight *= isEliteReward ? 1.08 : 0.92;
   }
-  if (earlyDirectionWindow && tags.includes(shipArchetype)) {
-    weight *= 1.08;
+  if (earlyDirectionWindow && isArchetypeCard) {
+    weight *= 0.9;
   }
 
-  if (tags.includes(shipArchetype)) {
-    if (encounter <= 1) weight *= 1.35;
-    else if (encounter === 2) weight *= 1.15;
+  if (isArchetypeCard) {
+    if (encounter <= 1) weight *= 0.92;
+    else if (encounter === 2) weight *= 0.96;
   }
 
   if (tags.includes("block") && encounter <= 2) {
@@ -3035,10 +3178,10 @@ function getCardRewardWeight(card) {
   }
 
   if (earlyRun && tags.includes("neutral") && card.category !== "neutral") {
-    weight *= 1.35;
+    weight *= 1.22;
   }
   if (card.category === "neutral") {
-    weight *= 0.64;
+    weight *= 1.18;
   }
   if (earlyRun && tags.includes("beam")) {
     weight *= 0.82;
@@ -3048,6 +3191,17 @@ function getCardRewardWeight(card) {
     if (ownedCopies > 0) {
       weight *= 1 / (1 + ownedCopies * 0.45);
     }
+  }
+
+  if (!committed && isArchetypeCard) {
+    const targetRate = isEliteReward ? ARCHETYPE_SEED_RATE_ELITE : ARCHETYPE_SEED_RATE_EARLY;
+    weight *= targetRate / Math.max(0.01, 1 - targetRate);
+  }
+
+  if (seenInLastOne) {
+    weight *= 0.12;
+  } else if (seenInLastTwo) {
+    weight *= 0.28;
   }
 
   weight *= getTimingWeightMultiplier(card.timing);
@@ -3063,6 +3217,7 @@ const MINI_COMBO_PAYOFF_IDS = new Set([
   "full-beam",
   "focused-beam",
   "beam-overload",
+  "prism-lance",
   "thermal-collapse",
   "industrial-beam",
   "meltdown-protocol",
@@ -3305,6 +3460,10 @@ const CARD_ROLE_BY_ID = {
   "charge-beam": "beam",
   "laser-pulse": "beam",
   "full-beam": "beam",
+  "beam-burst": "beam",
+  "beam-siphon": "beam",
+  "prism-lance": "beam",
+  "steady-charge": "beam",
   overfocus: "beam",
   recalibrate: "mark",
   "overdrive-cannon": "beam",
@@ -3381,6 +3540,10 @@ const REWARD_POOL_IDS = [
   "hard-lock",
   "charge-beam",
   "laser-pulse",
+  "beam-burst",
+  "beam-siphon",
+  "steady-charge",
+  "prism-lance",
   "full-beam",
   "overfocus",
   "recalibrate"
@@ -4333,7 +4496,7 @@ function getEnemySynergyAttackBonus(enemy, alive, intent) {
   const burner = alive.find(e => e.combatRole === "burner" && e.hull > 0);
   const parasite = alive.find(e => e.combatRole === "parasite" && e.hull > 0);
   const charger = alive.find(e => e.combatRole === "charger" && e.hull > 0);
-  const suppressChargerBurstSynergy = state.sectorNumber === 1 && state.encounterIndex <= 4;
+  const suppressChargerBurstSynergy = state.encounterIndex <= 4;
 
   if (enemy.combatRole === "parasite" && burner) {
     bonus += 1;
@@ -4497,6 +4660,10 @@ function buildRewardChoices() {
   console.log("REWARD SHIP:", state.selectedShipId);
   console.log("REWARD ARCHETYPE:", getShipArchetype(state.selectedShipId));
   console.log("REWARD POOL IDS:", pool.map(card => card.id));
+  if (state.run) {
+    const recent = [...(state.run.recentRewardOfferIds || []), ...finalPicks.map(card => card.id)];
+    state.run.recentRewardOfferIds = recent.slice(-10);
+  }
   state.rewardChoiceBonus = 0;
   return finalPicks.map(card => card.id);
 }
@@ -4523,7 +4690,7 @@ function showMapOverlay() {
   clearNonCombatPresentation();
   state.pendingReward = true;
 
-  els.overlayTitle.textContent = `Star Map — Sector ${state.sectorNumber} — Notoriety: ${getNotorietyLabel(state.notoriety)}`;
+  els.overlayTitle.textContent = `Star Map — Campaign Climb — Notoriety: ${getNotorietyLabel(state.notoriety)}`;
   const encPreviewLine =
     (currentNode.type === "combat" || currentNode.type === "elite") && !isNodeCleared(currentNode.id)
       ? `\n${getSoftEncounterPreviewLine(state.sectorNumber, currentNode.type === "elite")}`
@@ -4540,7 +4707,7 @@ function showMapOverlay() {
     <div class="reward-meta">Node ${currentNode.id} • ${formatNodeLabel(currentNode)}${formatNodeStatus(currentNode)}</div>
   </div>
   <div class="reward-option">
-    <div class="reward-name">Sector Map</div>
+    <div class="reward-name">Campaign Map</div>
     <div class="reward-meta">Current node is gold. Adjacent nodes are blue. Cleared nodes are dimmed. Adjacent nodes show fuel after travel. Darker combat nodes indicate higher danger.</div>
     ${renderStarMapSvg()}
   </div>
@@ -4585,7 +4752,7 @@ function renderMapScreen() {
 
   if (!els.mapTitleText || !els.mapSubtitleText || !els.mapCurrentInfo || !els.mapSvgWrap || !els.mapActionArea) return;
 
-  els.mapTitleText.textContent = `Campaign — Sector ${state.sectorNumber} / 3 • Boss checkpoint at each sector gate`;
+  els.mapTitleText.textContent = `Campaign Climb — Continuous Run • Boss at node 30`;
   const notorietyTooltip =
     getNotorietyLabel(state.notoriety) === "Hunted"
       ? "Hunted: powerful enemies are now actively pursuing you in endless mode."
@@ -4597,13 +4764,13 @@ function renderMapScreen() {
     •
     <span class="map-hud-tip" data-tooltip="Credits are spent at Shops and other special services.">Credits: ${state.runCredits}</span>
     •
-    <span class="map-hud-tip" data-tooltip="Tracks your progress through the current sector.">${getSectorProgressText()}</span>
+    <span class="map-hud-tip" data-tooltip="Tracks your progress through the full campaign climb.">${getSectorProgressText()}</span>
   `;
 
   const gateStateHtml =
     currentNode.type === "gate"
       ? `<div class="reward-meta"><span class="map-hud-tip" data-tooltip="${
-          "Boss Contract is available. Defeating the boss grants major rewards."
+          "Boss Contract is available at the end of the climb. Defeating it completes the run."
         }">Boss Contract Status: Available</span></div>`
       : "";
 
@@ -4662,6 +4829,17 @@ function renderMapScreen() {
       nodeEl.addEventListener("click", () => travelToNode(nodeId));
     }
   });
+
+  const mapSvgEl = els.mapSvgWrap.querySelector(".star-map-svg");
+  if (mapSvgEl) {
+    const currentRowNum = Number(mapSvgEl.getAttribute("data-current-row") || 0);
+    const maxRowNum = Number(mapSvgEl.getAttribute("data-max-row") || 0);
+    const rowSpan = Math.max(1, maxRowNum + 1);
+    const targetRatio = 1 - (currentRowNum + 0.5) / rowSpan;
+    const maxScroll = Math.max(0, els.mapSvgWrap.scrollHeight - els.mapSvgWrap.clientHeight);
+    const desired = Math.max(0, Math.min(maxScroll, maxScroll * targetRatio - els.mapSvgWrap.clientHeight * 0.18));
+    els.mapSvgWrap.scrollTop = desired;
+  }
 }
 
 function travelToNode(targetNodeId) {
@@ -5516,7 +5694,7 @@ function showGateOverlay() {
   state.pendingReward = true;
 
   els.overlayTitle.textContent = "Boss Contract";
-  els.overlayText.textContent = "High-value target located. Engage to complete the sector contract.";
+  els.overlayText.textContent = "Final target located. Engage to complete the campaign climb.";
   els.overlayBtn.classList.add("hidden");
   els.rewardOptions.innerHTML = "";
   els.rewardOptions.classList.remove("hidden");
@@ -5526,7 +5704,7 @@ function showGateOverlay() {
   jumpBtn.className = "reward-option";
   jumpBtn.innerHTML = `
     <div class="reward-name">Engage Boss Contract</div>
-    <div class="reward-meta">Confront ${getSectorBossName(state.sectorNumber)} to unlock the next sector upgrade.</div>
+    <div class="reward-meta">Confront ${getSectorBossName(state.sectorNumber)} to complete this run.</div>
   `;
   jumpBtn.addEventListener("click", () => {
     showBossIntroOverlay();
@@ -5870,7 +6048,8 @@ function showPostVictoryChoiceOverlay() {
 }
 
 function buildEnemyFromTemplate(template, role, tier) {
-  const sectorScale = 1 + (state.sectorNumber - 1) * 0.25;
+  const runStage = getRunProgressStage();
+  const sectorScale = 1 + (runStage - 1) * 0.25;
   const encounterScale = 1 + state.encounterIndex * 0.15;
   const finalScale = sectorScale * encounterScale;
 
@@ -5886,13 +6065,33 @@ function buildEnemyFromTemplate(template, role, tier) {
     let pressureBonus = 0;
     if (base.type === "attack") {
       pressureBonus =
-        state.sectorNumber === 1
+        runStage === 1
           ? Math.floor(Math.max(0, turn - 3) / 3)
           : Math.floor(Math.max(0, turn - 1) / 2);
     }
     let scaledAmount;
     if (base.type === "attack") {
       scaledAmount = Math.max(0, Math.round(base.amount * mult * finalScale) + pressureBonus);
+      const isFirstMandatoryElite =
+        state.eliteContractCombat && tier === "elite" && (state.encounterIndex || 0) <= 10;
+      const isEarlyCombat = runStage === 1 && tier !== "elite" && tier !== "boss";
+      if (isEarlyCombat && template.id === "scout") {
+        scaledAmount = Math.min(7, scaledAmount);
+      }
+      if (isEarlyCombat && template.id === "raider") {
+        scaledAmount = Math.min(6, scaledAmount);
+      }
+      if (isFirstMandatoryElite && template.id === "hunter") {
+        scaledAmount = Math.min(6, scaledAmount);
+      }
+      if (isFirstMandatoryElite && template.id === "interceptor") {
+        scaledAmount = Math.min(8, scaledAmount);
+      }
+      const isFirstEliteBurstBounty = isFirstMandatoryElite && template.id === "burst-bounty";
+      if (isFirstEliteBurstBounty) {
+        // Keep elite burst identity, but cap unfair early mandatory spike.
+        scaledAmount = Math.min(12, scaledAmount);
+      }
     } else {
       scaledAmount = Math.max(0, Math.round((base.amount || 0) * mult));
     }
@@ -6256,9 +6455,10 @@ function bucketMatchesTierRules(bucket, tier) {
 }
 
 function filterEncounterBucketsForSectorAndTier(sectorNumber, tier) {
+  const stage = getRunProgressStage();
   return ENCOUNTER_BUCKETS.filter(b => {
-    if (b.minSector != null && sectorNumber < b.minSector) return false;
-    if (b.maxSector != null && sectorNumber > b.maxSector) return false;
+    if (b.minSector != null && stage < b.minSector) return false;
+    if (b.maxSector != null && stage > b.maxSector) return false;
     return bucketMatchesTierRules(b, tier);
   });
 }
@@ -6316,9 +6516,10 @@ function pickEncounterBucketForRun(sectorNumber, tier) {
 }
 
 function filterEliteBucketsForSector(sectorNumber) {
+  const stage = getRunProgressStage();
   return ELITE_ENCOUNTER_BUCKETS.filter(b => {
-    if (b.minSector != null && sectorNumber < b.minSector) return false;
-    if (b.maxSector != null && sectorNumber > b.maxSector) return false;
+    if (b.minSector != null && stage < b.minSector) return false;
+    if (b.maxSector != null && stage > b.maxSector) return false;
     return true;
   });
 }
@@ -6336,9 +6537,10 @@ function pickEliteEncounterBucket(sectorNumber) {
 }
 
 function filterPlanetAmbushBucketsForSector(sectorNumber) {
+  const stage = getRunProgressStage();
   return PLANET_AMBUSH_BUCKETS.filter(b => {
-    if (b.minSector != null && sectorNumber < b.minSector) return false;
-    if (b.maxSector != null && sectorNumber > b.maxSector) return false;
+    if (b.minSector != null && stage < b.minSector) return false;
+    if (b.maxSector != null && stage > b.maxSector) return false;
     return true;
   });
 }
@@ -6378,9 +6580,10 @@ function formatEncounterTagsList(tags) {
 }
 
 function filterEncounterBucketsForSectorPreview(sectorNumber) {
+  const stage = getRunProgressStage();
   return ENCOUNTER_BUCKETS.filter(b => {
-    if (b.minSector != null && sectorNumber < b.minSector) return false;
-    if (b.maxSector != null && sectorNumber > b.maxSector) return false;
+    if (b.minSector != null && stage < b.minSector) return false;
+    if (b.maxSector != null && stage > b.maxSector) return false;
     return true;
   });
 }
@@ -6855,6 +7058,7 @@ function startRun(selectedShipId = "heavy-fighter") {
     miniComboSynergyShown: false,
     commitMomentUsed: false,
     encounterTagCounts: {},
+    recentRewardOfferIds: [],
     fuel: CAMPAIGN_MAX_FUEL
   };
   state.player.fuel = state.run.fuel;
@@ -7632,17 +7836,15 @@ function handleCombatEnd() {
   }
 
   if (state.inBossCombat) {
-    state.bossCount += 1;
-    if (!state.endlessMode && state.bossCount >= 3) {
-      state.endlessMode = true;
-      state.notoriety = 4;
-      log("Endless mode unlocked. Notoriety set to Hunted.", "system");
-      applyFuelCapForRunState();
-      state.run.fuel = state.player.maxFuel;
-      syncPlayerFuelFromRun();
-    }
     state.inBossCombat = false;
-    showShipUpgradeOverlay();
+    state.runWon = true;
+    state.pendingReward = true;
+    showOverlay(
+      "Run Complete",
+      "Boss defeated. You completed the 30-node campaign climb.",
+      "Restart Run",
+      () => startRun()
+    );
     return;
   }
 
